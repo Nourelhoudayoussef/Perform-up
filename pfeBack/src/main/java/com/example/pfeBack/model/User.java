@@ -26,6 +26,7 @@ public class User implements UserDetails {
 	private String resetCode; // Added for password reset functionality
 	private boolean verified = false; // Check if the user verified their email
 	private boolean approved = false; // Check if the user is approved by admin
+	private String profilePicture; // Store the profile picture as a Base64 string or URL
 	
 	public String getId() {
 		return id;
@@ -80,6 +81,12 @@ public class User implements UserDetails {
 	}
 	public void setApproved(boolean approved) {
 		this.approved = approved;
+	}
+	public String getProfilePicture() {
+		return profilePicture;
+	}
+	public void setProfilePicture(String profilePicture) {
+		this.profilePicture = profilePicture;
 	}
 
 	@Override

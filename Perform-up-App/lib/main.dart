@@ -40,26 +40,28 @@ class MyApp extends StatelessWidget {
         '/home': (context) => const ChatListScreen(),
         '/profile': (context) => const EditProfileScreen(),
         '/chat': (context) {
-          final args = ModalRoute.of(context)?.settings.arguments as Map<String, String>?;
+          final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
           if (args == null) {
             return const HomeScreen(); // Redirect to home if no args provided
           }
           return ChatScreen(
-            userId: args['userId'] ?? '',
-            username: args['username'] ?? 'Chat',
+            userId: args['userId']?.toString() ?? '',
+            username: args['username']?.toString() ?? 'Chat',
+            profilePicture: args['profilePicture']?.toString(),
           );
         },
         '/group-chat': (context) {
-          final args = ModalRoute.of(context)?.settings.arguments as Map<String, String>?;
+          final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
           return GroupChatScreen(
-            groupName: args?['groupName'] ?? 'Group Chat',
+            groupName: args?['groupName']?.toString() ?? 'Group Chat',
+            groupId: args?['groupId']?.toString(),
           );
         },
         '/group-chats': (context) => const GroupChatsScreen(),
         '/notifications': (context) {
-          final args = ModalRoute.of(context)?.settings.arguments as Map<String, String>?;
+          final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
           return FutureBuilder<UserRole>(
-            future: _getUserRole(args?['role']),
+            future: _getUserRole(args?['role']?.toString()),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -95,4 +97,3 @@ class MyApp extends StatelessWidget {
     return result;
   }
 }
-

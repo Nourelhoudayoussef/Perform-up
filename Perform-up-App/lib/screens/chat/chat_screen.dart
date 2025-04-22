@@ -6,15 +6,18 @@ import 'package:pfe/models/message.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pfe/models/chat_group.dart';
 import 'dart:async';
+import 'dart:convert';
 
 class ChatScreen extends StatefulWidget {
   final String userId;
   final String username;
+  final String? profilePicture;
 
   const ChatScreen({
     super.key,
     required this.userId,
     required this.username,
+    this.profilePicture,
   });
 
   @override
@@ -37,6 +40,7 @@ class _ChatScreenState extends State<ChatScreen> {
     print('ChatScreen initialized with:'); // Debug log
     print('userId: "${widget.userId}"'); // Debug log
     print('username: "${widget.username}"'); // Debug log
+    print('profilePicture: "${widget.profilePicture}"'); // Debug log
     _loadUserData();
     _initializeChat();
     // Start periodic message checking every 3 seconds
@@ -231,32 +235,38 @@ class _ChatScreenState extends State<ChatScreen> {
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: const Color(0xFFD0ECE8),
-        elevation: 0,
+        elevation: 4.0,
+        shadowColor: Colors.black.withOpacity(0.25),
+        leadingWidth: 56,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black87),
-          onPressed: () => Navigator.pop(context),
+          icon: const Icon(FontAwesomeIcons.arrowLeft, color: Color(0xC5000000)),
+          onPressed: () => Navigator.of(context).pop(),
         ),
         title: Row(
           children: [
             CircleAvatar(
-              radius: 20,
-              backgroundColor: const Color(0xFF90DAD2),
-              child: Text(
-                widget.username[0].toUpperCase(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 16,
-                ),
-              ),
+              radius: 16,
+              backgroundColor: Colors.grey[300],
+              backgroundImage: widget.profilePicture != null && widget.profilePicture!.isNotEmpty
+                  ? MemoryImage(base64Decode(widget.profilePicture!.split(',').last)) as ImageProvider
+                  : null,
+              child: widget.profilePicture == null || widget.profilePicture!.isEmpty
+                  ? Text(
+                      widget.username[0].toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    )
+                  : null,
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
             Text(
               widget.username,
-              style: const TextStyle(
+              style: GoogleFonts.poppins(
                 fontSize: 18,
                 fontWeight: FontWeight.w500,
-                color: Colors.black87,
+                color: const Color(0xC5000000),
               ),
             ),
           ],

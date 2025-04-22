@@ -491,7 +491,6 @@ class ApiService {
         List<dynamic> data = json.decode(response.body);
         print('Successfully fetched ${data.length} approved users');
         return data.map((user) => {
-          // Try both field names for user ID and convert to string to ensure compatibility
           'id': user['id']?.toString() ?? user['_id']?.toString() ?? '',
           'username': user['username'],
           'email': user['email'],
@@ -561,6 +560,7 @@ class ApiService {
     String? username,
     String? currentPassword,
     String? newPassword,
+    String? profilePicture,
   }) async {
     try {
       final Map<String, String> requestBody = {
@@ -574,6 +574,10 @@ class ApiService {
       if (currentPassword != null && newPassword != null) {
         requestBody['currentPassword'] = currentPassword;
         requestBody['newPassword'] = newPassword;
+      }
+      
+      if (profilePicture != null && profilePicture.isNotEmpty) {
+        requestBody['profilePicture'] = profilePicture;
       }
 
       print('Edit profile request body: ${json.encode(requestBody)}'); // Debug print
@@ -592,7 +596,22 @@ class ApiService {
       print('Edit profile response body: ${response.body}'); // Debug print
 
       if (response.statusCode == 200) {
-        return json.decode(response.body);
+        final responseData = json.decode(response.body);
+        
+        // Update profile picture in SharedPreferences if it was updated
+        if (profilePicture != null && profilePicture.isNotEmpty) {
+          final prefs = await SharedPreferences.getInstance();
+          final userId = prefs.getString('userId');
+        
+          // Only store the profile picture with user-specific key
+          if (userId != null) {
+            await prefs.setString('profilePicture_$userId', profilePicture);
+            // Remove the generic key to prevent it from being shared across users
+            await prefs.remove('profilePicture');
+          }
+        }
+        
+        return responseData;
       } else {
         final errorData = json.decode(response.body);
         throw Exception(errorData['message'] ?? 'Failed to update profile');
@@ -799,11 +818,16 @@ class ApiService {
 
       if (response.statusCode == 200) {
         List<dynamic> data = json.decode(response.body);
-        return data.map((user) => {
+        final users = data.map((user) => {
           'id': user['id'] ?? user['_id'] ?? '',  // Handle both MongoDB ID formats
           'username': user['username'] ?? '',
           'email': user['email'] ?? '',
+          'role': user['role'] ?? '',  // Include the role
+          'profilePicture': user['profilePicture'], // Include profile picture
         }).toList();
+
+        // Filter out admin users
+        return users.where((user) => user['role']?.toString().toUpperCase() != 'ADMIN').toList();
       }
       
       // Return empty list instead of throwing exception
@@ -1156,7 +1180,6 @@ class ApiService {
           'name': user['username'],
           'email': user['email'],
           'role': user['role'],
-          'image': 'assets/images/default_avatar.png', // Default image
         }).toList();
       }
       
@@ -1191,7 +1214,6 @@ class ApiService {
           'name': user['username'],
           'email': user['email'],
           'role': user['role'],
-          'image': 'assets/images/default_avatar.png', // Default image
         }).toList();
       }
       
@@ -1232,7 +1254,6 @@ class ApiService {
           'name': user['username'],
           'email': user['email'],
           'role': user['role'],
-          'image': 'assets/images/default_avatar.png', // Default image
         }).toList();
         
         print('Mapped ${results.length} user results'); // Debug log

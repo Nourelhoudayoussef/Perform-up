@@ -5,6 +5,7 @@ import 'package:pfe/screens/chat/chat_screen.dart';
 import 'package:pfe/services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async'; // Add this import for Timer
+import 'dart:convert'; // Add this import for base64Decode
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -57,9 +58,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
         final allUsers = futures[0] as List<Map<String, dynamic>>;
         final unreadCountsData = futures[1] as Map<String, int>;
 
-        // Filter out current user
+        // Filter out current user and admin users
         final filteredUsers = allUsers.where((user) => 
-          user['id'] != null && user['id'].toString() != currentUserId
+          user['id'] != null && 
+          user['id'].toString() != currentUserId &&
+          user['role']?.toString().toUpperCase() != 'ADMIN'
         ).toList();
 
         // Get all user IDs for last messages query
@@ -285,14 +288,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           child: ListTile(
                             leading: CircleAvatar(
                               backgroundColor: getAvatarColor(user['username'].toString()[0]),
-                              child: Text(
-                                user['username'].toString()[0].toUpperCase(),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w400,
-                                  fontSize: 15,
-                                ),
-                              ),
+                              backgroundImage: user['profilePicture'] != null && 
+                                             user['profilePicture'].toString().isNotEmpty
+                                  ? MemoryImage(base64Decode(user['profilePicture'].toString().split(',').last)) as ImageProvider
+                                  : null,
+                              child: (user['profilePicture'] == null || user['profilePicture'].toString().isEmpty)
+                                  ? Text(
+                                      user['username'].toString()[0].toUpperCase(),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w400,
+                                        fontSize: 15,
+                                      ),
+                                    )
+                                  : null,
                             ),
                             title: Text(
                               user['username'].toString(),
@@ -348,6 +357,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                                 arguments: {
                                   'userId': user['id'].toString(),
                                   'username': user['username'].toString(),
+                                  'profilePicture': user['profilePicture']?.toString(),
                                 },
                               ).then((_) {
                                 // Refresh unread counts when returning from chat

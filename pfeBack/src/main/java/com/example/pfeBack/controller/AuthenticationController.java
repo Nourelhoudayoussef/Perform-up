@@ -302,6 +302,10 @@ public class AuthenticationController {
                     userMap.put("email", user.getEmail());
                     userMap.put("username", user.getUsername());
                     userMap.put("role", user.getRole());
+                    // Include profile picture if available
+                    if (user.getProfilePicture() != null && !user.getProfilePicture().isEmpty()) {
+                        userMap.put("profilePicture", user.getProfilePicture());
+                    }
                     return userMap;
                 })
                 .collect(Collectors.toList());
@@ -383,6 +387,7 @@ public class AuthenticationController {
         String newUsername = request.get("username");
         String currentPassword = request.get("currentPassword");
         String newPassword = request.get("newPassword");
+        String profilePicture = request.get("profilePicture");
 
         if (email == null) {
             return ResponseEntity.badRequest().body(Map.of("message", "Email is required"));
@@ -416,11 +421,17 @@ public class AuthenticationController {
             }
             user.setPassword(passwordEncoder.encode(newPassword));
         }
+        
+        // Update profile picture if provided
+        if (profilePicture != null && !profilePicture.isEmpty()) {
+            user.setProfilePicture(profilePicture);
+        }
 
         userRepository.save(user);
         return ResponseEntity.ok(Map.of(
             "message", "Profile updated successfully",
-            "username", user.getUsername()
+            "username", user.getUsername(),
+            "profilePicture", user.getProfilePicture() != null ? user.getProfilePicture() : ""
         ));
     }
 }

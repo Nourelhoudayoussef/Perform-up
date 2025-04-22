@@ -308,19 +308,6 @@ class _ManageGroupScreenState extends State<ManageGroupScreen> {
     }
   }
 
-  // Update the CircleAvatar widget to use a placeholder when the image asset is not available
-  Widget buildAvatar(String? imagePath) {
-    return CircleAvatar(
-      backgroundColor: Color(0xFF6BBFB5),
-      child: Text(
-        '?',
-        style: TextStyle(color: Colors.white),
-      ),
-      // We would use the following code if the asset existed:
-      // backgroundImage: AssetImage(imagePath ?? 'assets/images/default_avatar.png'),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final filteredMembers = getFilteredMembers();
@@ -466,7 +453,15 @@ class _ManageGroupScreenState extends State<ManageGroupScreen> {
                   itemBuilder: (context, index) {
                     final user = allUsers[index];
                     return ListTile(
-                      leading: buildAvatar(user["image"]),
+                      leading: CircleAvatar(
+                        backgroundColor: Color(0xFF6BBFB5),
+                        child: Text(
+                          user["name"] != null && user["name"].toString().isNotEmpty 
+                              ? user["name"].toString()[0].toUpperCase()
+                              : '?',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
                       title: Text(
                         user["name"],
                         style: GoogleFonts.poppins(
@@ -525,7 +520,15 @@ class _ManageGroupScreenState extends State<ManageGroupScreen> {
                   final isCreator = member['id'] == _creatorId;
                   
                   return ListTile(
-                    leading: buildAvatar(member["image"]),
+                    leading: CircleAvatar(
+                      backgroundColor: Color(0xFF6BBFB5),
+                      child: Text(
+                        member['name'] != null && member['name'].toString().isNotEmpty 
+                            ? member['name'].toString()[0].toUpperCase()
+                            : '?',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
                     title: Text(
                       member["name"],
                       style: GoogleFonts.poppins(

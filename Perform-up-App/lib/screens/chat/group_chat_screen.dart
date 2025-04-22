@@ -6,6 +6,8 @@ import 'package:pfe/services/api_service.dart';
 import 'package:pfe/models/message.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 class GroupChatScreen extends StatefulWidget {
   final String groupName;
@@ -116,7 +118,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           "text": msg.content,
           "sender": <String, dynamic>{
             "name": isSentByUser ? "You" : msg.senderName,
-            "image": isSentByUser ? null : "assets/images/default_avatar.png", // Default image, will be replaced by profile API
             "userId": msg.senderId, // Store user ID for fetching profile image later
           },
           "isSentByUser": isSentByUser,
@@ -409,15 +410,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                           if (!isSentByUser) ...[
                             CircleAvatar(
                               radius: 16,
-                              backgroundImage: sender['image'] != null 
-                                ? sender['image'].toString().startsWith('assets/') 
-                                  ? AssetImage(sender['image']) 
-                                  : NetworkImage(sender['image']) as ImageProvider
+                              backgroundColor: Color(0xFF6BBFB5),
+                              backgroundImage: sender['image'] != null && !sender['image'].toString().startsWith('assets/') 
+                                ? MemoryImage(base64Decode(sender['image'].toString().split(',').last)) as ImageProvider
                                 : null,
-                              backgroundColor: sender['image'] == null 
-                                ? Color(0xFF6BBFB5)
-                                : null,
-                              child: sender['image'] == null 
+                              child: sender['image'] == null || sender['image'].toString().startsWith('assets/')
                                 ? Text(
                                     sender['name'][0].toUpperCase(),
                                     style: TextStyle(color: Colors.white),

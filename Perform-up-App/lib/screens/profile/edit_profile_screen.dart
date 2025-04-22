@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'package:pfe/services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({Key? key}) : super(key: key);
@@ -28,6 +29,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _showConfirmPassword = false;
   String? _userEmail;
   String? _currentUsername;
+  String? _profilePicture;
   bool _isPasswordVisible = false;
   File? _imageFile;
   final ImagePicker _picker = ImagePicker();
@@ -40,11 +42,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString('userId');
+    
     setState(() {
       _userEmail = prefs.getString('email');
       _currentUsername = prefs.getString('username');
+      _profilePicture = userId != null ? prefs.getString('profilePicture_$userId') : null;
       _usernameController.text = _currentUsername ?? '';
     });
+  }
+
+  // Convert image file to base64 string
+  Future<String> _imageToBase64(File imageFile) async {
+    final bytes = await imageFile.readAsBytes();
+    return 'data:image/jpeg;base64,${base64Encode(bytes)}';
   }
 
   Future<void> _updateProfile() async {
@@ -56,6 +67,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final apiService = ApiService();
       final bool isChangingPassword = _currentPasswordController.text.isNotEmpty &&
           _newPasswordController.text.isNotEmpty;
+          
+      // Convert image to base64 if an image was selected
+      String? base64Image;
+      if (_imageFile != null) {
+        base64Image = await _imageToBase64(_imageFile!);
+      }
 
       final response = await apiService.editProfile(
         email: _userEmail!,
@@ -65,12 +82,25 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         currentPassword:
             isChangingPassword ? _currentPasswordController.text : null,
         newPassword: isChangingPassword ? _newPasswordController.text : null,
+        profilePicture: base64Image,
       );
 
       // Update stored username if it was changed
       if (response['username'] != null) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('username', response['username']);
+      }
+      
+      // Update stored profile picture if it was returned
+      if (response['profilePicture'] != null) {
+        final prefs = await SharedPreferences.getInstance();
+        final userId = prefs.getString('userId');
+        if (userId != null) {
+          await prefs.setString('profilePicture_$userId', response['profilePicture']);
+        }
+        setState(() {
+          _profilePicture = response['profilePicture'];
+        });
       }
 
       if (mounted) {
@@ -241,9 +271,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         child: CircleAvatar(
                           radius: 58,
                           backgroundColor: Colors.transparent,
-                          backgroundImage: _imageFile != null
-                              ? FileImage(_imageFile!) as ImageProvider
-                              : AssetImage('assets/images/smith.png'),
+                          backgroundImage: _imageFile != null 
+                              ? FileImage(_imageFile!) 
+                              : _profilePicture != null && _profilePicture!.isNotEmpty
+                                  ? MemoryImage(base64Decode(_profilePicture!.split(',').last)) as ImageProvider
+                                  : null,
+                          child: _imageFile == null && (_profilePicture == null || _profilePicture!.isEmpty)
+                              ? Icon(
+                                  Icons.person,
+                                  size: 60,
+                                  color: Colors.grey,
+                                )
+                              : null,
                         ),
                       ),
                       Positioned(
@@ -258,9 +297,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           ),
                           child: IconButton(
                             icon: Icon(
-                              FontAwesomeIcons.pencil,
+                              Icons.camera_alt,
                               color: Colors.white,
-                              size: 15,
+                              size: 20,
                             ),
                             onPressed: _showImageSourceDialog,
                           ),
@@ -529,4 +568,4 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _confirmPasswordController.dispose();
     super.dispose();
   }
-} 
+}

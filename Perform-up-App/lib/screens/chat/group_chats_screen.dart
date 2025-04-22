@@ -69,8 +69,7 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
             
             _availableUsers = users.where((user) => 
               user['id'].toString() != _currentUserId &&
-              !user['email'].toString().contains('admin') &&
-              user['username'].toString().toLowerCase() != 'admin'
+              user['role']?.toString().toUpperCase() != 'ADMIN'
             ).toList();
             
             _isLoading = false;
@@ -467,8 +466,15 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                 
                 return ListTile(
                   leading: CircleAvatar(
-                    backgroundImage: AssetImage('assets/images/default_avatar.png'),
+                    backgroundColor: Color(0xFF6BBFB5),
                     radius: 20,
+                    child: Text(
+                      (member['name'] ?? member['username'] ?? '?')[0].toUpperCase(),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                      ),
+                    ),
                   ),
                   title: Text(
                     member['name'] ?? member['username'] ?? '',
