@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
-import 'dart:io' show Platform;
 import '../models/message.dart';
 import '../models/notification_model.dart';
 
@@ -14,28 +13,8 @@ class WebSocketService {
   
   WebSocketService._internal();
   
-  // Get the appropriate WebSocket URL based on device
-  static String get _webSocketUrl {
-    if (Platform.isAndroid) {
-      // Android emulator uses 10.0.2.2 to access host machine's localhost
-      // Physical devices need the actual IP address of your computer
-      return Platform.isAndroid && !isPhysicalDevice() 
-          ? 'ws://10.0.2.2:8080/ws'    // Emulator
-          : 'ws://YOUR_COMPUTER_IP:8080/ws';  // Physical device - replace with your actual IP
-    } else if (Platform.isIOS) {
-      // iOS simulator uses localhost
-      return !isPhysicalDevice() 
-          ? 'ws://localhost:8080/ws'    // Simulator
-          : 'ws://YOUR_COMPUTER_IP:8080/ws';  // Physical device - replace with your actual IP
-    }
-    return 'ws://localhost:8080/ws';  // Fallback
-  }
-  
-  // Simple check to try to determine if running on a physical device
-  static bool isPhysicalDevice() {
-    // This is a simplified check - not 100% reliable
-    return !Platform.environment.containsKey('FLUTTER_TEST');
-  }
+  // Backend WebSocket URL
+  static const String _webSocketUrl = 'ws://10.0.2.2:8080/ws';
   
   // WebSocket channel instance
   WebSocketChannel? _channel;
