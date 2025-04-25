@@ -6,6 +6,7 @@ import 'package:pfe/models/chat_group.dart';
 import 'package:pfe/models/message.dart';
 import 'package:collection/collection.dart';
 import '../models/notification_model.dart';
+import 'dart:io' show Platform;
 
 extension MapStringDynamicExtension on Map<String, dynamic> {
   // Safely get a String value from a map
@@ -17,7 +18,30 @@ extension MapStringDynamicExtension on Map<String, dynamic> {
 }
 
 class ApiService {
-  static const String baseUrl = 'http://10.0.2.2:8080'; // Android emulator localhost
+  // Use different URLs for emulator vs physical device
+  static String get baseUrl {
+    if (Platform.isAndroid) {
+      // Android emulator uses 10.0.2.2 to access host machine's localhost
+      // Physical devices need the actual IP address of your computer
+      return Platform.isAndroid && !isPhysicalDevice() 
+          ? 'http://10.0.2.2:8080'   // Emulator
+          : 'http://YOUR_COMPUTER_IP:8080';  // Physical device - replace with your actual IP
+    } else if (Platform.isIOS) {
+      // iOS simulator uses localhost
+      return !isPhysicalDevice() 
+          ? 'http://localhost:8080'   // Simulator
+          : 'http://YOUR_COMPUTER_IP:8080';  // Physical device - replace with your actual IP
+    }
+    return 'http://localhost:8080';  // Fallback
+  }
+  
+  // Simple check to try to determine if running on a physical device
+  static bool isPhysicalDevice() {
+    // This is a simplified check - not 100% reliable
+    // More reliable checks require platform channels
+    return !Platform.environment.containsKey('FLUTTER_TEST');
+  }
+
   static const Duration _minRequestInterval = Duration(milliseconds: 500);
   DateTime _lastRequestTime = DateTime.now().subtract(const Duration(seconds: 1));
 

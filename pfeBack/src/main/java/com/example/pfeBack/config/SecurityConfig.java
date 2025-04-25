@@ -47,8 +47,21 @@ public class SecurityConfig {
                 .requestMatchers("/auth/**").permitAll()
                 .requestMatchers("/test/**", "/api/test/**", "/actuator/**").permitAll()
                 
+                // WebSocket endpoints - explicitly permit all WebSocket related paths
+                .requestMatchers("/ws/**", "/ws").permitAll() 
+                .requestMatchers("/ws/info/**", "/ws/info").permitAll()
+                .requestMatchers("/ws/sockjs-info/**", "/ws/sockjs-info").permitAll()
+                .requestMatchers("/topic/**").permitAll()
+                .requestMatchers("/app/**").permitAll()
+                
                 // Admin endpoints
                 .requestMatchers("/admin/**").hasRole("ADMIN")
+                
+                // Supervisor endpoints
+                .requestMatchers("/supervisor/**").hasRole("SUPERVISOR")
+                
+                // Technician endpoints
+                .requestMatchers("/technician/**").hasRole("TECHNICIAN")
                 
                 // Notification endpoints - only MANAGER and SUPERVISOR can send notifications
                 .requestMatchers("/notifications/send/**", "/notifications/urgent/**").hasAnyRole("MANAGER", "SUPERVISOR")

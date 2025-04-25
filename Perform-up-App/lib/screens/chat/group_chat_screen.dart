@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:pfe/screens/chat/manage_group_screen.dart';
 import 'package:pfe/services/api_service.dart';
+import 'package:pfe/services/websocket_service.dart';
 import 'package:pfe/models/message.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
@@ -29,12 +30,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ApiService _apiService = ApiService();
+  final WebSocketService _webSocketService = WebSocketService();
   
   List<Map<String, dynamic>> messages = [];
   bool _isLoading = true;
   String? _currentUserId;
   String? _currentUsername;
-  Timer? _messageTimer;
+  StreamSubscription? _chatSubscription;
   
   @override
   void initState() {
@@ -46,8 +48,52 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
-    _messageTimer?.cancel();
+    _chatSubscription?.cancel();
     super.dispose();
+  }
+  
+  void _subscribeToWebSocketMessages() {
+    if (widget.groupId == null) return;
+    
+    // Subscribe to group-specific WebSocket topic
+    _webSocketService.subscribeToGroupChat(widget.groupId!);
+    
+    // Listen for new messages
+    _chatSubscription = _webSocketService.chatMessageStream.listen((message) {
+      if (message.chatGroupId == widget.groupId) {
+        final bool isSentByUser = message.senderId == _currentUserId;
+        
+        final newMessage = <String, dynamic>{
+          "id": message.id,
+          "text": message.content,
+          "sender": <String, dynamic>{
+            "name": isSentByUser ? "You" : message.senderName,
+            "userId": message.senderId,
+          },
+          "isSentByUser": isSentByUser,
+          "timestamp": message.timestamp,
+        };
+        
+        // Add the message if it's not already in the list
+        if (!messages.any((m) => m["id"] == message.id)) {
+          setState(() {
+            messages.add(newMessage);
+            
+            // Sort messages by timestamp
+            messages.sort((a, b) {
+              final aTime = a["timestamp"] as DateTime;
+              final bTime = b["timestamp"] as DateTime;
+              return aTime.compareTo(bTime);
+            });
+          });
+          
+          // Scroll to bottom when new messages arrive
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _scrollToBottom();
+          });
+        }
+      }
+    });
   }
   
   Future<void> _initializeChat() async {
@@ -66,12 +112,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       if (widget.groupId != null && _currentUserId != null) {
         await _loadMessages();
         
-        // Set up timer to refresh messages every 3 seconds
-        _messageTimer = Timer.periodic(Duration(seconds: 3), (timer) {
-          if (mounted) {
-            _loadMessages();
-          }
-        });
+        // Connect to WebSocket if not already connected
+        if (!_webSocketService.isConnected) {
+          await _webSocketService.connect();
+        }
+        
+        // Subscribe to WebSocket messages
+        _subscribeToWebSocketMessages();
         
         // Mark chat as read
         try {
@@ -87,19 +134,23 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       
       // Scroll to bottom after messages load
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
+        _scrollToBottom();
       });
     } catch (e) {
       print('Error initializing chat: $e');
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+  
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
     }
   }
   
@@ -132,28 +183,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         return aTime.compareTo(bTime);
       });
       
-      // Check if we have new messages compared to current state
-      if (messages.isEmpty || 
-          uiMessages.isNotEmpty && 
-          (messages.last["id"] == null || uiMessages.last["id"] != messages.last["id"])) {
-        setState(() {
-          messages = uiMessages;
-        });
-        
-        // Fetch user profile images after loading messages
-        _fetchUserProfiles();
-        
-        // Scroll to bottom when new messages arrive
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.animateTo(
-              _scrollController.position.maxScrollExtent,
-              duration: Duration(milliseconds: 300),
-              curve: Curves.easeOut,
-            );
-          }
-        });
-      }
+      setState(() {
+        messages = uiMessages;
+      });
+      
+      // Fetch user profile images after loading messages
+      _fetchUserProfiles();
     } catch (e) {
       print('Error loading messages: $e');
     }
@@ -194,71 +229,40 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       
       // Scroll to the bottom
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
+        _scrollToBottom();
       });
       
-      // Actually send the message through API
-      try {
-        print('Sending message: $text to group: ${widget.groupId}');
-        final message = await _apiService.sendMessage(
-          _currentUserId!,
-          widget.groupId!,
-          text,
-        );
-        
-        print('Message sent successfully, received: ${message.toJson()}');
-        
-        // Replace the optimistic message with the real one from server
-        setState(() {
-          // Find the optimistic message
-          final index = messages.indexWhere((m) => 
-            m["id"] == tempMessageId && 
-            m["isOptimistic"] == true);
-            
-          if (index != -1) {
-            // Convert Message object to a simple Map to avoid type issues
-            final Map<String, dynamic> messageMap = {
-              "id": message.id,
-              "text": message.content,
-              "sender": {
-                "name": message.senderId == _currentUserId ? "You" : message.senderName,
-                "image": null, // We don't have access to profile image in the message response
-                "userId": message.senderId,
-              },
-              "isSentByUser": message.senderId == _currentUserId,
-              "timestamp": message.timestamp,
-            };
-            
-            // Update the message in the list
-            messages[index] = messageMap;
-          }
-        });
-      } catch (e) {
-        print('Error sending message to server: $e');
-        
-        // Remove the optimistic message
-        setState(() {
-          messages.removeWhere((m) => m["id"] == tempMessageId);
-        });
-        
-        // Show error
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send message: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      print('Error in _sendMessage: $e');
+      // Send message via the API
+      final sentMessage = await _apiService.sendMessage(
+        _currentUserId!,
+        widget.groupId!,
+        text
+      );
       
-      // Optionally show an error toast/snackbar
+      // Also send via WebSocket for real-time delivery
+      await _webSocketService.sendGroupMessage(widget.groupId!, text);
+      
+      // Replace the optimistic message with the real one
+      setState(() {
+        final optimisticIndex = messages.indexWhere((msg) => msg["id"] == tempMessageId);
+        if (optimisticIndex >= 0) {
+          messages[optimisticIndex] = {
+            "id": sentMessage.id,
+            "text": sentMessage.content,
+            "sender": {"name": "You", "userId": _currentUserId},
+            "isSentByUser": true,
+            "timestamp": sentMessage.timestamp,
+          };
+        }
+      });
+    } catch (e) {
+      print('Error sending message: $e');
+      
+      // Show error and remove optimistic message
+      setState(() {
+        messages.removeWhere((msg) => msg["id"] == 'temp_${DateTime.now().millisecondsSinceEpoch}');
+      });
+      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to send message: $e')),
       );

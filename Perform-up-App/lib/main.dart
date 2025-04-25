@@ -11,12 +11,30 @@ import 'package:pfe/screens/chat/group_chat_screen.dart';
 import 'package:pfe/screens/chat/group_chats_screen.dart';
 import 'package:pfe/screens/notifications/role_based_notification_screen.dart';
 import 'package:pfe/screens/profile/edit_profile_screen.dart';
+import 'package:pfe/services/websocket_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized(); 
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
+  initializeWebSocket();
   runApp(const MyApp());
+}
+
+// Initialize WebSocket connection if user is logged in
+Future<void> initializeWebSocket() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    
+    if (token != null) {
+      // User is logged in, connect to WebSocket
+      final webSocketService = WebSocketService();
+      await webSocketService.connect();
+    }
+  } catch (e) {
+    print('Error initializing WebSocket: $e');
+  }
 }
 
 class MyApp extends StatelessWidget {

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 import '../../providers/notification_provider.dart';
+import '../../services/websocket_service.dart';
+import '../../models/notification_model.dart';
 
 class ReceivedNotificationsView extends StatefulWidget {
   const ReceivedNotificationsView({super.key});
@@ -13,16 +16,39 @@ class ReceivedNotificationsView extends StatefulWidget {
 class _ReceivedNotificationsViewState extends State<ReceivedNotificationsView> {
   bool _isLoading = true;
   String? _error;
+  final WebSocketService _webSocketService = WebSocketService();
+  StreamSubscription? _notificationSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadNotifications();
+    _subscribeToWebSocketNotifications();
+  }
+  
+  @override
+  void dispose() {
+    _notificationSubscription?.cancel();
+    super.dispose();
+  }
+  
+  // Subscribe to WebSocket notifications
+  void _subscribeToWebSocketNotifications() {
+    _notificationSubscription = _webSocketService.notificationStream.listen((notification) {
+      // Add the notification to the provider
+      final provider = Provider.of<NotificationProvider>(context, listen: false);
+      provider.addNewNotification(notification);
+    });
   }
 
   Future<void> _loadNotifications() async {
     try {
       await Provider.of<NotificationProvider>(context, listen: false).loadReceivedNotifications();
+      
+      // Connect to websocket if not already connected
+      if (!_webSocketService.isConnected) {
+        await _webSocketService.connect();
+      }
     } catch (e) {
       if (mounted) {
         setState(() {

@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.example.pfeBack.controller.WebSocketController;
 import com.example.pfeBack.model.Notification;
 import com.example.pfeBack.model.User;
 import com.example.pfeBack.model.Role;
@@ -23,9 +24,17 @@ public class NotificationService {
     @Autowired
     private UserRepository userRepository;
     
+    @Autowired
+    private WebSocketController webSocketController;
+    
     public Notification createNotification(String title, String message, String type, String senderId, List<String> recipientIds) {
         Notification notification = new Notification(title, message, type, senderId, recipientIds);
-        return notificationRepository.save(notification);
+        notification = notificationRepository.save(notification);
+        
+        // Broadcast via WebSocket for real-time delivery
+        webSocketController.broadcastNotification(notification);
+        
+        return notification;
     }
     
     public List<Notification> getNotificationsForUser(String userId) {
@@ -44,7 +53,12 @@ public class NotificationService {
         Notification notification = notificationRepository.findById(notificationId)
             .orElseThrow(() -> new RuntimeException("Notification not found"));
         notification.setRead(true);
-        return notificationRepository.save(notification);
+        notification = notificationRepository.save(notification);
+        
+        // Broadcast the update so other clients know it's been read
+        webSocketController.broadcastNotification(notification);
+        
+        return notification;
     }
     
     public void deleteNotification(String notificationId) {

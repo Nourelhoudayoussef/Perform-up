@@ -255,4 +255,17 @@ class NotificationProvider extends ChangeNotifier {
       throw Exception(e.toString().replaceAll('Exception: ', ''));
     }
   }
+
+  // Add a new notification from WebSocket
+  void addNewNotification(NotificationModel notification) {
+    // Check if the notification is not already in the list
+    if (!receivedNotifications.any((n) => n.id == notification.id)) {
+      receivedNotifications.add(notification);
+      
+      // Sort notifications by creation date (newest first)
+      receivedNotifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      
+      notifyListeners();
+    }
+  }
 } 
