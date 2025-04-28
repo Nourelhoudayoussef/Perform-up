@@ -41,7 +41,7 @@ dependencies:
   http: ^1.1.0
   shared_preferences: ^2.2.2
   logger: ^2.0.2+1
-  stomp_dart_client: ^1.0.0
+  stomp_dart_client: ^1.0.2
   web_socket_channel: ^2.4.0
 
 
@@ -64,6 +64,7 @@ dev_dependencies:
 flutter:
   assets:
     - assets/
+    - assets/images/avatar.jpg
     - assets/images/
     - assets/images/login.svg
     - assets/images/resetPassword.svg

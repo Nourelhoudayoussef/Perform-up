@@ -6,6 +6,8 @@ import 'package:pfe/models/chat_group.dart';
 import 'package:pfe/models/message.dart';
 import 'package:collection/collection.dart';
 import '../models/notification_model.dart';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart';
 
 extension MapStringDynamicExtension on Map<String, dynamic> {
   // Safely get a String value from a map
@@ -17,7 +19,16 @@ extension MapStringDynamicExtension on Map<String, dynamic> {
 }
 
 class ApiService {
-  static const String baseUrl = 'http://10.0.2.2:8080'; // Android emulator localhost
+  // Check if running on emulator or real device and use appropriate URL
+  static String get baseUrl {
+    if (Platform.isAndroid) {
+      return 'http://10.0.2.2:8080';
+    } else if (Platform.isIOS) {
+      return 'http://localhost:8080';
+    }
+    return 'http://10.0.2.2:8080'; // Fallback
+  }
+
   static const Duration _minRequestInterval = Duration(milliseconds: 500);
   DateTime _lastRequestTime = DateTime.now().subtract(const Duration(seconds: 1));
 

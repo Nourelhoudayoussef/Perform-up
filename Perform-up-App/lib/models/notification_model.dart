@@ -7,6 +7,7 @@ class NotificationModel {
   final String type;
   final DateTime createdAt;
   final bool isRead;
+  final String? senderProfilePicture;
 
   NotificationModel({
     required this.id,
@@ -17,6 +18,7 @@ class NotificationModel {
     required this.type,
     required this.createdAt,
     required this.isRead,
+    this.senderProfilePicture,
   });
 
   factory NotificationModel.fromJson(Map<String, dynamic> json) {
@@ -31,6 +33,7 @@ class NotificationModel {
           ? DateTime.parse(json['createdAt'].toString())
           : DateTime.now(),
       isRead: json['isRead'] ?? false,
+      senderProfilePicture: json['senderProfilePicture'],
     );
   }
 
@@ -44,6 +47,7 @@ class NotificationModel {
       'type': type,
       'createdAt': createdAt.toIso8601String(),
       'isRead': isRead,
+      'senderProfilePicture': senderProfilePicture,
     };
   }
 } 
