@@ -4,7 +4,6 @@ import 'package:pfe/screens/authentication/login_screen.dart';
 import 'package:pfe/screens/authentication/signup_screen.dart';
 import 'package:pfe/screens/authentication/reset_password_screen.dart';
 import 'package:pfe/screens/chat/ChatListScreen.dart';
-import 'package:pfe/screens/home/home_screen.dart';
 import 'package:pfe/screens/chat/chat_screen.dart';
 import 'package:pfe/screens/admin/manage_users_screen.dart';
 import 'package:pfe/screens/chat/group_chat_screen.dart';
@@ -12,6 +11,7 @@ import 'package:pfe/screens/chat/group_chats_screen.dart';
 import 'package:pfe/screens/notifications/role_based_notification_screen.dart';
 import 'package:pfe/screens/profile/edit_profile_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'screens/technician/intervention_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized(); 
@@ -37,12 +37,33 @@ class MyApp extends StatelessWidget {
         '/signup': (context) => const SignUpScreen(),
         '/reset-password': (context) => const ResetPasswordScreen(),
         '/manage-users': (context) => const ManageUsersScreen(),
-        '/home': (context) => const ChatListScreen(),
+        '/home': (context) => FutureBuilder<UserRole>(
+          future: _getUserRole(null),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            // Show InterventionScreen for technicians, ChatListScreen for others
+            return snapshot.data == UserRole.TECHNICIAN 
+                ? const InterventionScreen() 
+                : const ChatListScreen();
+          },
+        ),
         '/profile': (context) => const EditProfileScreen(),
         '/chat': (context) {
           final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
           if (args == null) {
-            return const HomeScreen(); // Redirect to home if no args provided
+            return FutureBuilder<UserRole>(
+              future: _getUserRole(null),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                return snapshot.data == UserRole.TECHNICIAN 
+                    ? const InterventionScreen() 
+                    : const ChatListScreen();
+              },
+            );
           }
           return ChatScreen(
             userId: args['userId']?.toString() ?? '',
@@ -72,6 +93,7 @@ class MyApp extends StatelessWidget {
             },
           );
         },
+        '/interventions': (context) => const InterventionScreen(),
       },
     );
   }

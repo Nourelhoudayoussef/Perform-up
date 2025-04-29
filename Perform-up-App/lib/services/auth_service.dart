@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class AuthService {
-  static const String baseUrl = 'http://10.0.2.2:8080'; // Android emulator localhost
+  static const String baseUrl = 'http://192.168.3.128:8080'; // WiFi IP address for laptop
 
   Future<bool> signUp({
     required String name,

@@ -24,7 +24,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
   final SignUpControllers controllers = SignUpControllers();
   bool _isLoginPasswordVisible = false;
-  static const String baseUrl = 'http://10.0.2.2:8080'; // Android emulator localhost
+  
+  // For Android Emulator use 10.0.2.2
+  // For real device testing, use your computer's actual IP address
+  static const String baseUrl = 'http://192.168.3.128:8080';
+  // If testing on real device, comment above line and uncomment below line with your computer's IP
+  // static const String baseUrl = 'http://YOUR_COMPUTER_IP:8080';
 
   @override
   void dispose() {
