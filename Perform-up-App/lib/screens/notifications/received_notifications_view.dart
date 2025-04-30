@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 import '../../providers/notification_provider.dart';
+import '../../services/websocket_service.dart';
+import '../../models/notification_model.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class ReceivedNotificationsView extends StatefulWidget {
   const ReceivedNotificationsView({super.key});
@@ -13,16 +18,55 @@ class ReceivedNotificationsView extends StatefulWidget {
 class _ReceivedNotificationsViewState extends State<ReceivedNotificationsView> {
   bool _isLoading = true;
   String? _error;
+  final WebSocketService _webSocketService = WebSocketService();
+  StreamSubscription? _notificationSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadNotifications();
+    _subscribeToWebSocketNotifications();
+  }
+  
+  @override
+  void dispose() {
+    _notificationSubscription?.cancel();
+    super.dispose();
+  }
+  
+  // Subscribe to WebSocket notifications
+  void _subscribeToWebSocketNotifications() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString('userId');
+    
+    if (userId == null) {
+      print('Error: User ID not found in SharedPreferences');
+      return;
+    }
+
+    // Connect to websocket if not already connected
+    if (!_webSocketService.isConnected) {
+      await _webSocketService.connect();
+    }
+
+    // Subscribe to notifications
+    _webSocketService.subscribeToNotifications(userId);
+
+    _notificationSubscription = _webSocketService.notificationStream.listen((notification) {
+      // Add the notification to the provider
+      final provider = Provider.of<NotificationProvider>(context, listen: false);
+      provider.addNewNotification(notification);
+    });
   }
 
   Future<void> _loadNotifications() async {
     try {
       await Provider.of<NotificationProvider>(context, listen: false).loadReceivedNotifications();
+      
+      // Connect to websocket if not already connected
+      if (!_webSocketService.isConnected) {
+        await _webSocketService.connect();
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -115,7 +159,16 @@ class _ReceivedNotificationsViewState extends State<ReceivedNotificationsView> {
                 child: Row(
                   children: [
                     CircleAvatar(
-                      backgroundImage: AssetImage('assets/images/default_avatar.png'),
+                      backgroundImage: notification.senderProfilePicture != null && notification.senderProfilePicture!.isNotEmpty
+                          ? (notification.senderProfilePicture!.startsWith('data:image')
+                              ? MemoryImage(
+                                  base64Decode(
+                                    notification.senderProfilePicture!.split(',').last,
+                                  ),
+                                )
+                              : NetworkImage(notification.senderProfilePicture!)
+                            ) as ImageProvider
+                          : AssetImage('assets/images/avatar.jpg'),
                       radius: 25,
                     ),
                     SizedBox(width: 16),
@@ -126,14 +179,18 @@ class _ReceivedNotificationsViewState extends State<ReceivedNotificationsView> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                notification.title,
-                                style: GoogleFonts.poppins(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xC5000000),
+                              Expanded(
+                                child: Text(
+                                  notification.title,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xC5000000),
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
+                              SizedBox(width: 8),
                               Text(
                                 notification.createdAt.toString(),
                                 style: GoogleFonts.poppins(

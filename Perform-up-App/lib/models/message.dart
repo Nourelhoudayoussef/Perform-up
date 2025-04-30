@@ -1,6 +1,7 @@
 class Message {
   final String id;
   final String senderId;
+  final String receiverId;
   final String chatGroupId;
   final String content;
   final DateTime timestamp;
@@ -9,6 +10,7 @@ class Message {
   Message({
     required this.id,
     required this.senderId,
+    required this.receiverId,
     required this.chatGroupId,
     required this.content,
     required this.timestamp,
@@ -19,6 +21,7 @@ class Message {
     return Message(
       id: json['id']?.toString() ?? '',
       senderId: json['senderId']?.toString() ?? '',
+      receiverId: json['receiverId']?.toString() ?? '',
       chatGroupId: json['chatGroupId']?.toString() ?? '',
       content: json['content']?.toString() ?? '',
       timestamp: json['timestamp'] != null 
@@ -32,6 +35,7 @@ class Message {
     return {
       'id': id,
       'senderId': senderId,
+      'receiverId': receiverId,
       'chatGroupId': chatGroupId,
       'content': content,
       'timestamp': timestamp.toIso8601String(),

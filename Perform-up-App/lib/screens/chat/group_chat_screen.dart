@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:pfe/screens/chat/manage_group_screen.dart';
 import 'package:pfe/services/api_service.dart';
+import 'package:pfe/services/websocket_service.dart';
 import 'package:pfe/models/message.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
@@ -29,33 +30,98 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ApiService _apiService = ApiService();
+  final WebSocketService _webSocketService = WebSocketService();
   
   List<Map<String, dynamic>> messages = [];
   bool _isLoading = true;
   String? _currentUserId;
   String? _currentUsername;
-  Timer? _messageTimer;
+  StreamSubscription? _chatSubscription;
   
   @override
   void initState() {
     super.initState();
+    print('[GroupChatScreen] initState called');
+    print('groupName: "${widget.groupName}"'); // Debug log
+    print('groupId: "${widget.groupId}"'); // Debug log
     _initializeChat();
+    
+    // Add a post-frame callback to scroll to bottom after the first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _scrollToBottom();
+      }
+    });
   }
   
   @override
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
-    _messageTimer?.cancel();
+    _chatSubscription?.cancel();
     super.dispose();
   }
   
+  void _subscribeToWebSocketMessages() {
+    if (widget.groupId == null) return;
+    
+    print('[GroupChatScreen] Subscribing to WebSocket messages for group: ${widget.groupId}');
+    
+    // Subscribe to group-specific WebSocket topic
+    _webSocketService.subscribeToGroupChat(widget.groupId!);
+    
+    // Listen for new messages
+    _chatSubscription = _webSocketService.chatMessageStream.listen((message) {
+      print('[GroupChatScreen] Received WebSocket message: ${message.toJson()}');
+      if (message.chatGroupId == widget.groupId) {
+        final bool isSentByUser = message.senderId == _currentUserId;
+        
+        final newMessage = <String, dynamic>{
+          "id": message.id,
+          "text": message.content,
+          "sender": <String, dynamic>{
+            "name": isSentByUser ? "You" : message.senderName,
+            "userId": message.senderId,
+          },
+          "isSentByUser": isSentByUser,
+          "timestamp": message.timestamp,
+        };
+        
+        // Add the message if it's not already in the list
+        if (!messages.any((m) => m["id"] == message.id)) {
+          setState(() {
+            messages.add(newMessage);
+            
+            // Sort messages by timestamp
+            messages.sort((a, b) {
+              final aTime = a["timestamp"] as DateTime;
+              final bTime = b["timestamp"] as DateTime;
+              return aTime.compareTo(bTime);
+            });
+          });
+          
+          // Scroll to bottom when new messages arrive
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _scrollToBottom();
+          });
+        }
+      }
+    });
+  }
+  
   Future<void> _initializeChat() async {
+    print('[GroupChatScreen] _initializeChat called');
+    setState(() {
+      _isLoading = true;
+    });
+    
     try {
       // Get user data
       final prefs = await SharedPreferences.getInstance();
       _currentUserId = prefs.getString('userId');
       _currentUsername = prefs.getString('username');
+      
+      print('[GroupChatScreen] Current user: $_currentUserId, $_currentUsername');
       
       // Initialize empty messages list
       setState(() {
@@ -66,18 +132,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       if (widget.groupId != null && _currentUserId != null) {
         await _loadMessages();
         
-        // Set up timer to refresh messages every 3 seconds
-        _messageTimer = Timer.periodic(Duration(seconds: 3), (timer) {
-          if (mounted) {
-            _loadMessages();
-          }
-        });
+        // Connect to WebSocket if not already connected
+        if (!_webSocketService.isConnected) {
+          print('[GroupChatScreen] WebSocket not connected, connecting...');
+          await _webSocketService.connect();
+        }
+        
+        // Subscribe to WebSocket messages
+        _subscribeToWebSocketMessages();
         
         // Mark chat as read
         try {
           await _apiService.markChatAsRead(widget.groupId!, _currentUserId!);
         } catch (e) {
-          print('Error marking chat as read: $e');
+          print('[GroupChatScreen] Error marking chat as read: $e');
         }
       }
       
@@ -87,19 +155,25 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       
       // Scroll to bottom after messages load
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
+        if (mounted) {
+          _scrollToBottom();
         }
       });
     } catch (e) {
-      print('Error initializing chat: $e');
+      print('[GroupChatScreen] Error initializing chat: $e');
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+  
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0.0, // Since we're using reverse: true, 0.0 is the bottom
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
     }
   }
   
@@ -132,28 +206,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         return aTime.compareTo(bTime);
       });
       
-      // Check if we have new messages compared to current state
-      if (messages.isEmpty || 
-          uiMessages.isNotEmpty && 
-          (messages.last["id"] == null || uiMessages.last["id"] != messages.last["id"])) {
-        setState(() {
-          messages = uiMessages;
-        });
-        
-        // Fetch user profile images after loading messages
-        _fetchUserProfiles();
-        
-        // Scroll to bottom when new messages arrive
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.animateTo(
-              _scrollController.position.maxScrollExtent,
-              duration: Duration(milliseconds: 300),
-              curve: Curves.easeOut,
-            );
-          }
-        });
-      }
+      setState(() {
+        messages = uiMessages;
+      });
+      
+      // Fetch user profile images after loading messages
+      _fetchUserProfiles();
     } catch (e) {
       print('Error loading messages: $e');
     }
@@ -178,9 +236,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       return;
     }
     
+    String? tempMessageId; // Declare tempMessageId at the method scope
+    
     try {
       // Optimistically add message to UI
-      final tempMessageId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+      tempMessageId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
       setState(() {
         messages.add({
           "id": tempMessageId,
@@ -194,73 +254,44 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       
       // Scroll to the bottom
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
+        _scrollToBottom();
       });
       
-      // Actually send the message through API
-      try {
-        print('Sending message: $text to group: ${widget.groupId}');
-        final message = await _apiService.sendMessage(
-          _currentUserId!,
-          widget.groupId!,
-          text,
-        );
-        
-        print('Message sent successfully, received: ${message.toJson()}');
-        
-        // Replace the optimistic message with the real one from server
-        setState(() {
-          // Find the optimistic message
-          final index = messages.indexWhere((m) => 
-            m["id"] == tempMessageId && 
-            m["isOptimistic"] == true);
-            
-          if (index != -1) {
-            // Convert Message object to a simple Map to avoid type issues
-            final Map<String, dynamic> messageMap = {
-              "id": message.id,
-              "text": message.content,
-              "sender": {
-                "name": message.senderId == _currentUserId ? "You" : message.senderName,
-                "image": null, // We don't have access to profile image in the message response
-                "userId": message.senderId,
-              },
-              "isSentByUser": message.senderId == _currentUserId,
-              "timestamp": message.timestamp,
-            };
-            
-            // Update the message in the list
-            messages[index] = messageMap;
-          }
-        });
-      } catch (e) {
-        print('Error sending message to server: $e');
-        
-        // Remove the optimistic message
-        setState(() {
-          messages.removeWhere((m) => m["id"] == tempMessageId);
-        });
-        
-        // Show error
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send message: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      print('Error in _sendMessage: $e');
+      // Send message via the API
+      final sentMessage = await _apiService.sendMessage(
+        _currentUserId!,
+        widget.groupId!,
+        text
+      );
       
-      // Optionally show an error toast/snackbar
+      // Replace the optimistic message with the real one
+      setState(() {
+        final optimisticIndex = messages.indexWhere((msg) => msg["id"] == tempMessageId);
+        if (optimisticIndex >= 0) {
+          messages[optimisticIndex] = {
+            "id": sentMessage.id,
+            "text": sentMessage.content,
+            "sender": {"name": "You", "userId": _currentUserId},
+            "isSentByUser": true,
+            "timestamp": sentMessage.timestamp,
+          };
+        }
+      });
+    } catch (e) {
+      print('[GroupChatScreen] Error sending message: $e');
+      // Remove the optimistic message
+      if (tempMessageId != null) {
+        setState(() {
+          messages.removeWhere((msg) => msg["id"] == tempMessageId);
+        });
+      }
+      
+      // Show error message
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send message: $e')),
+        SnackBar(
+          content: Text('Failed to send message: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -311,160 +342,165 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       backgroundColor: Color(0xFFF0F7F5),
       
       appBar: PreferredSize(
-      preferredSize: Size.fromHeight(70), // Keep the height as required
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.transparent,// Match background color
-          border: Border(
-            bottom: BorderSide(
-              color: Colors.black.withOpacity(0.1), // 10% opacity black line
-              width: 1, // Thin line
+        preferredSize: Size.fromHeight(70),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            border: Border(
+              bottom: BorderSide(
+                color: Colors.black.withOpacity(0.1),
+                width: 1,
+              ),
             ),
           ),
-        ),
-      child: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        toolbarHeight: 70,
-        leading: IconButton(
-          icon: Icon(FontAwesomeIcons.arrowLeft, color: Color(0xC5000000), size: 20),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          widget.groupName,
-          style: GoogleFonts.poppins(
-            fontSize: 18,
-            fontWeight: FontWeight.w500,
-            color: Color(0xC5000000),
+          child: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            toolbarHeight: 70,
+            leading: IconButton(
+              icon: Icon(FontAwesomeIcons.arrowLeft, color: Color(0xC5000000), size: 20),
+              onPressed: () => Navigator.pop(context),
+            ),
+            title: Text(
+              widget.groupName,
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+                color: Color(0xC5000000),
+              ),
+            ),
+            actions: [
+              IconButton(
+                icon: Icon(FontAwesomeIcons.ellipsisVertical, color: Color(0xC5000000), size: 20),
+                onPressed: () {
+                  if (widget.groupId == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Cannot manage group: No group ID available')),
+                    );
+                    return;
+                  }
+                  
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ManageGroupScreen(
+                        groupName: widget.groupName,
+                        groupId: widget.groupId!,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
         ),
-        actions: [
-          IconButton(
-            icon: Icon(FontAwesomeIcons.ellipsisVertical, color: Color(0xC5000000), size: 20),
-            onPressed: () {
-              if (widget.groupId == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Cannot manage group: No group ID available')),
-                );
-                return;
-              }
-              
-              // Print debug information
-              print('Opening ManageGroupScreen with:');
-              print('- Group ID: ${widget.groupId}');
-              print('- Group Name: ${widget.groupName}');
-              print('- Current User ID: $_currentUserId');
-              
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ManageGroupScreen(
-                    groupName: widget.groupName,
-                    groupId: widget.groupId!,
-                    // We'll fetch members from API in ManageGroupScreen
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
       ),
-      ),
-    ),
       body: Column(
         children: [
           Expanded(
             child: _isLoading
               ? Center(child: CircularProgressIndicator(color: Color(0xFF6BBFB5)))
-              : ListView.builder(
-                  controller: _scrollController,
-                  padding: EdgeInsets.all(16),
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final message = messages[index];
-                    
-                    if (message.containsKey('isDate')) {
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          child: Text(
-                            message['text'],
-                            style: GoogleFonts.poppins(
-                              color: Color(0x99000000),
-                              fontSize: 12,
+              : NotificationListener<ScrollNotification>(
+                  onNotification: (ScrollNotification notification) {
+                    if (notification is ScrollEndNotification) {
+                      // Keep the view at the bottom when new messages arrive
+                      if (_scrollController.position.pixels < _scrollController.position.maxScrollExtent - 100) {
+                        _scrollToBottom();
+                      }
+                    }
+                    return true;
+                  },
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    reverse: true, // Start from bottom
+                    padding: EdgeInsets.all(16),
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      final message = messages[messages.length - 1 - index]; // Access messages from end
+                      
+                      if (message.containsKey('isDate')) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            child: Text(
+                              message['text'],
+                              style: GoogleFonts.poppins(
+                                color: Color(0x99000000),
+                                fontSize: 12,
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    }
+                        );
+                      }
 
-                    final bool isSentByUser = message['isSentByUser'];
-                    final sender = message['sender'];
+                      final bool isSentByUser = message['isSentByUser'];
+                      final sender = message['sender'];
 
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: isSentByUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-                        children: [
-                          if (!isSentByUser) ...[
-                            CircleAvatar(
-                              radius: 16,
-                              backgroundColor: Color(0xFF6BBFB5),
-                              backgroundImage: sender['image'] != null && !sender['image'].toString().startsWith('assets/') 
-                                ? MemoryImage(base64Decode(sender['image'].toString().split(',').last)) as ImageProvider
-                                : null,
-                              child: sender['image'] == null || sender['image'].toString().startsWith('assets/')
-                                ? Text(
-                                    sender['name'][0].toUpperCase(),
-                                    style: TextStyle(color: Colors.white),
-                                  )
-                                : null,
-                            ),
-                            SizedBox(width: 8),
-                          ],
-                          Flexible(
-                            child: Column(
-                              crossAxisAlignment: isSentByUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                              children: [
-                                if (!isSentByUser) // Only show name for others' messages
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 4, bottom: 4),
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: isSentByUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+                          children: [
+                            if (!isSentByUser) ...[
+                              CircleAvatar(
+                                radius: 16,
+                                backgroundColor: Color(0xFF6BBFB5),
+                                backgroundImage: sender['image'] != null && !sender['image'].toString().startsWith('assets/') 
+                                  ? MemoryImage(base64Decode(sender['image'].toString().split(',').last)) as ImageProvider
+                                  : null,
+                                child: sender['image'] == null || sender['image'].toString().startsWith('assets/')
+                                  ? Text(
+                                      sender['name'][0].toUpperCase(),
+                                      style: TextStyle(color: Colors.white),
+                                    )
+                                  : null,
+                              ),
+                              SizedBox(width: 8),
+                            ],
+                            Flexible(
+                              child: Column(
+                                crossAxisAlignment: isSentByUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                children: [
+                                  if (!isSentByUser)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 4, bottom: 4),
+                                      child: Text(
+                                        sender['name'],
+                                        style: GoogleFonts.poppins(
+                                          color: Color(0x99000000),
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  Container(
+                                    padding: EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: isSentByUser ? Color(0xFFD0ECE8) : Color(0xFFE4E4E4).withOpacity(0.83),
+                                      borderRadius: BorderRadius.only(
+                                        topLeft: Radius.circular(16),
+                                        topRight: Radius.circular(16),
+                                        bottomLeft: isSentByUser ? Radius.circular(16) : Radius.circular(0),
+                                        bottomRight: isSentByUser ? Radius.circular(0) : Radius.circular(16),
+                                      ),
+                                    ),
                                     child: Text(
-                                      sender['name'],
+                                      message['text'],
                                       style: GoogleFonts.poppins(
-                                        color: Color(0x99000000),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
+                                        color: Color(0xC5000000),
+                                        fontSize: 14,
                                       ),
                                     ),
                                   ),
-                                Container(
-                                  padding: EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: isSentByUser ? Color(0xFFD0ECE8) : Color(0xFFE4E4E4).withOpacity(0.83),
-                                    borderRadius: BorderRadius.only(
-                                      topLeft: Radius.circular(16),
-                                      topRight: Radius.circular(16),
-                                      bottomLeft: isSentByUser ? Radius.circular(16) : Radius.circular(0),
-                                      bottomRight: isSentByUser ? Radius.circular(0) : Radius.circular(16),
-                                    ),
-                                  ),
-                                  child: Text(
-                                    message['text'],
-                                    style: GoogleFonts.poppins(
-                                      color: Color(0xC5000000),
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
+                          ],
+                        ),
+                      );
+                    },
+                  ),
                 ),
           ),
           Container(
@@ -476,8 +512,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             child: Row(
               children: [
                 SizedBox(
-                  width: 286, // Set width to 286
-                  height: 54, // Set height to 54
+                  width: 286,
+                  height: 54,
                   child: TextField(
                     controller: _messageController,
                     decoration: InputDecoration(
@@ -492,14 +528,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     ),
                   ),
                 ),
-
                 SizedBox(width: 12),
-
                 GestureDetector(
                   onTap: _sendMessage,
                   child: Container(
-                    width: 54, // Set width to 54
-                    height: 54, // Set height to 54
+                    width: 54,
+                    height: 54,
                     decoration: BoxDecoration(
                       color: Color(0xFF6BBFB5),
                       shape: BoxShape.circle,

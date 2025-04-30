@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:pfe/services/api_service.dart';
+import 'package:pfe/services/websocket_service.dart';
 import 'package:pfe/models/message.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pfe/models/chat_group.dart';
@@ -28,24 +29,31 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ApiService _apiService = ApiService();
+  final WebSocketService _webSocketService = WebSocketService();
   List<Message> _messages = [];
   bool _isLoading = true;
-  Timer? _messageTimer;
   String? _currentUserId;
   String? _currentUsername;
+  StreamSubscription? _chatSubscription;
 
   @override
   void initState() {
     super.initState();
-    print('ChatScreen initialized with:'); // Debug log
+    print('[ChatScreen] initState called');
     print('userId: "${widget.userId}"'); // Debug log
     print('username: "${widget.username}"'); // Debug log
     print('profilePicture: "${widget.profilePicture}"'); // Debug log
     _loadUserData();
     _initializeChat();
-    // Start periodic message checking every 3 seconds
-    _messageTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-      _loadMessages();
+    
+    // Subscribe to websocket messages
+    _subscribeToWebSocketMessages();
+
+    // Add a post-frame callback to scroll to bottom after the first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _scrollToBottom();
+      }
     });
   }
 
@@ -53,11 +61,33 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
-    _messageTimer?.cancel();
+    _chatSubscription?.cancel();
     super.dispose();
   }
 
+  // Subscribe to WebSocket messages
+  void _subscribeToWebSocketMessages() {
+    _chatSubscription = _webSocketService.chatMessageStream.listen((message) {
+      // Check if this message belongs to this chat conversation
+      if (message.chatGroupId == generateChatGroupId(_currentUserId!, widget.userId)) {
+        setState(() {
+          // Add the message if it's not already in the list
+          if (!_messages.any((m) => m.id == message.id)) {
+            _messages.add(message);
+            _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+          }
+        });
+        
+        // Scroll to bottom after new message is received
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scrollToBottom();
+        });
+      }
+    });
+  }
+
   Future<void> _loadUserData() async {
+    print('[ChatScreen] _loadUserData called');
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString('userId');
@@ -67,73 +97,97 @@ class _ChatScreenState extends State<ChatScreen> {
       print('userId: "$userId"'); // Debug log
       print('username: "$username"'); // Debug log
       
-      if (userId == null) {
-        throw Exception('User ID not found');
+      if (mounted) {
+        setState(() {
+          _currentUserId = userId;
+          _currentUsername = username;
+        });
       }
-      
-      setState(() {
-        _currentUserId = userId;
-        _currentUsername = username;
-      });
-      
-      await _loadMessages();
-      setState(() {
-        _isLoading = false;
-      });
     } catch (e) {
       print('Error loading user data: $e');
-      setState(() {
-        _isLoading = false;
-      });
+    }
+  }
+
+  Future<void> _initializeChat() async {
+    print('[ChatScreen] _initializeChat called');
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      await _loadUserData();
+      await _loadMessages();
+      
+      if (_webSocketService.isConnected) {
+        print('WebSocket already connected');
+      } else {
+        print('Connecting to WebSocket...');
+        await _webSocketService.connect();
+      }
+      
+      // Subscribe to the chat topic after connecting
+      final chatGroupId = generateChatGroupId(_currentUserId!, widget.userId);
+      print('Subscribing to chat topic: $chatGroupId');
+      _webSocketService.subscribeToChatGroup(chatGroupId);
+    } catch (e) {
+      print('Error initializing chat: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
   Future<void> _loadMessages() async {
+    if (_currentUserId == null) {
+      print('Current user ID is null, cannot load messages');
+      return;
+    }
+    
     try {
-      if (_currentUserId == null) return;
+      final groupId = generateChatGroupId(_currentUserId!, widget.userId);
+      print('[ChatScreen] Loading messages for chat group: $groupId');
       
-      print('Loading messages between $_currentUserId and ${widget.userId}'); // Debug log
-      
-      final newMessages = await _apiService.getIndividualMessages(
+      final messages = await _apiService.getIndividualMessages(
         _currentUserId!,
         widget.userId,
       );
       
-      print('Loaded ${newMessages.length} messages'); // Debug log
-      
-      // Mark chat as read when loading messages
-      String chatId = generateChatGroupId(_currentUserId!, widget.userId);
-      await _apiService.markChatAsRead(chatId, _currentUserId!);
-      
       if (mounted) {
         setState(() {
-          // Check if there are new messages
-          if (_messages.isEmpty) {
-            _messages = newMessages;
-          } else if (newMessages.isNotEmpty) {
-            // Check if last message is different
-            final lastExistingMessage = _messages.last;
-            final lastNewMessage = newMessages.last;
-            
-            if (lastExistingMessage.id != lastNewMessage.id) {
-              _messages = newMessages;
-              // Only scroll to bottom if we received new messages
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _scrollToBottom();
-              });
-            }
+          _messages = messages;
+          _isLoading = false;
+        });
+        
+        // Schedule scroll to bottom after messages are loaded
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _scrollToBottom();
           }
         });
       }
     } catch (e) {
-      print('Error loading messages: $e');
+      print('[ChatScreen] Error loading messages: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
+  }
+
+  String generateChatGroupId(String userId1, String userId2) {
+    List<String> ids = [userId1, userId2];
+    ids.sort(); // Sort to ensure the same ID regardless of order
+    return 'individual_${ids[0]}_${ids[1]}';
   }
 
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+        0.0, // Since we're using reverse: true, 0.0 is the bottom
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
@@ -141,6 +195,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
+    print('[ChatScreen] _sendMessage called');
     if (_messageController.text.trim().isEmpty) return;
     
     final String content = _messageController.text.trim();
@@ -149,6 +204,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final tempMessage = Message(
       id: 'temp_${DateTime.now().millisecondsSinceEpoch}',
       senderId: _currentUserId!,
+      receiverId: widget.userId,
       chatGroupId: generateChatGroupId(_currentUserId!, widget.userId),
       content: content,
       timestamp: DateTime.now(),
@@ -166,11 +222,15 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
+      // Send message via REST API
       final message = await _apiService.sendIndividualMessage(
         _currentUserId!,
         widget.userId,
         content,
       );
+
+      // Also send via WebSocket for real-time delivery
+      await _webSocketService.sendChatMessage(widget.userId, content);
 
       // Replace the temporary message with the real one
       setState(() {
@@ -194,49 +254,24 @@ class _ChatScreenState extends State<ChatScreen> {
           m.senderId == _currentUserId);
       });
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error sending message: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-  
-  // Helper method to generate a consistent chatGroupId
-  String generateChatGroupId(String userId1, String userId2) {
-    final List<String> ids = [userId1, userId2]..sort();
-    return 'individual_${ids[0]}_${ids[1]}';
-  }
-
-  Future<void> _initializeChat() async {
-    try {
-      await _loadMessages();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error initializing chat: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to send message: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    print('[ChatScreen] build called');
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF0F7F5),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFD0ECE8),
-        elevation: 4.0,
-        shadowColor: Colors.black.withOpacity(0.25),
+        backgroundColor: Colors.white,
+        elevation: 0,
         leadingWidth: 56,
         leading: IconButton(
           icon: const Icon(FontAwesomeIcons.arrowLeft, color: Color(0xC5000000)),
@@ -287,40 +322,51 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       )
-                    : ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _messages.length,
-                        itemBuilder: (context, index) {
-                          final message = _messages[index];
-                          final isMe = message.senderId == _currentUserId;
-
-                          return Align(
-                            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                            child: Container(
-                              padding: const EdgeInsets.all(12),
-                              margin: const EdgeInsets.only(bottom: 8),
-                              decoration: BoxDecoration(
-                                color: isMe ? const Color(0xFFD0ECE8) : const Color(0xFFF5F5F5),
-                                borderRadius: BorderRadius.only(
-                                  topLeft: const Radius.circular(16),
-                                  topRight: const Radius.circular(16),
-                                  bottomLeft: Radius.circular(isMe ? 16 : 0),
-                                  bottomRight: Radius.circular(isMe ? 0 : 16),
-                                ),
-                              ),
-                              constraints: BoxConstraints(
-                                maxWidth: MediaQuery.of(context).size.width * 0.75,
-                              ),
-                              child: Text(
-                                message.content,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                            ),
-                          );
+                    : NotificationListener<ScrollNotification>(
+                        onNotification: (ScrollNotification scrollInfo) {
+                          if (scrollInfo is ScrollEndNotification) {
+                            // Update scroll position when scrolling ends
+                            _scrollToBottom();
+                          }
+                          return true;
                         },
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _messages.length,
+                          reverse: true, // This will make the list start from bottom
+                          itemBuilder: (context, index) {
+                            final message = _messages[_messages.length - 1 - index];
+                            final isMe = message.senderId == _currentUserId;
+
+                            return Align(
+                              alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                margin: const EdgeInsets.only(bottom: 8),
+                                decoration: BoxDecoration(
+                                  color: isMe ? const Color(0xFFD0ECE8) : const Color(0xFFF5F5F5),
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: const Radius.circular(16),
+                                    topRight: const Radius.circular(16),
+                                    bottomLeft: Radius.circular(isMe ? 16 : 0),
+                                    bottomRight: Radius.circular(isMe ? 0 : 16),
+                                  ),
+                                ),
+                                constraints: BoxConstraints(
+                                  maxWidth: MediaQuery.of(context).size.width * 0.75,
+                                ),
+                                child: Text(
+                                  message.content,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ),
           ),
           Container(

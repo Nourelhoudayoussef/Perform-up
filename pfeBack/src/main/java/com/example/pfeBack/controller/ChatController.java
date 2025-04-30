@@ -9,6 +9,7 @@ import com.example.pfeBack.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -31,6 +32,9 @@ public class ChatController {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
 
     @PostMapping("/groups")
     public ResponseEntity<?> createChatGroup(@RequestBody Map<String, Object> request) {
@@ -128,24 +132,22 @@ public class ChatController {
             // Update last message in chat group and mark as read for sender only
             chatGroupRepository.findById(chatGroupId).ifPresent(group -> {
                 group.updateLastMessage(content);
-                
                 // Debug: Print the lastReadTimestamps before update
                 System.out.println("Before update - lastReadTimestamps: " + group.getLastReadTimestamps());
-                
                 // Get current time to use for all timestamp updates
                 LocalDateTime now = LocalDateTime.now();
-                
                 // Mark as read for the sender only
                 group.getLastReadTimestamps().put(senderId, now);
-                
                 // Update the last activity timestamp for the group
                 group.setLastActivity(now);
-                
                 // Debug: Print the lastReadTimestamps after update
                 System.out.println("After update - lastReadTimestamps: " + group.getLastReadTimestamps());
-                
                 chatGroupRepository.save(group);
             });
+
+            System.out.println("[ChatController] Broadcasting to /topic/chat/" + chatGroupId + " | senderId: " + senderId + ", content: " + content);
+            // Broadcast the message to WebSocket subscribers
+            messagingTemplate.convertAndSend("/topic/chat/" + chatGroupId, message);
 
             return ResponseEntity.ok(message);
         } catch (Exception e) {
@@ -254,21 +256,22 @@ public class ChatController {
 
             // Create and save the message
             Message message = new Message(senderId, chatGroupId, content, senderName);
+            message.setReceiverId(receiverId); // Ensure receiverId is set
             message = messageRepository.save(message);
 
             // Update last message in chat group and mark as read for sender only
             chatGroup.updateLastMessage(content);
-            
             // Debug: Print the lastReadTimestamps before update
             System.out.println("Before update - lastReadTimestamps: " + chatGroup.getLastReadTimestamps());
-            
             // Mark as read for the sender only
             chatGroup.getLastReadTimestamps().put(senderId, LocalDateTime.now());
-            
             // Debug: Print the lastReadTimestamps after update
             System.out.println("After update - lastReadTimestamps: " + chatGroup.getLastReadTimestamps());
-            
             chatGroupRepository.save(chatGroup);
+
+            System.out.println("[ChatController] Broadcasting to /topic/chat/" + chatGroupId + " | senderId: " + senderId + ", receiverId: " + receiverId + ", content: " + content);
+            // Broadcast the message to WebSocket subscribers
+            messagingTemplate.convertAndSend("/topic/chat/" + chatGroupId, message);
 
             return ResponseEntity.ok(message);
         } catch (Exception e) {

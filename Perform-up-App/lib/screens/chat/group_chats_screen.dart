@@ -224,7 +224,7 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
         toolbarHeight: 100,
         leading: IconButton(
           icon: Icon(FontAwesomeIcons.arrowLeft, color: Color(0xC5000000)),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
         ),
         title: Text(
           "Group Chats",

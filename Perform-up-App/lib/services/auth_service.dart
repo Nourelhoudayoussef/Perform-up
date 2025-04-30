@@ -1,6 +1,8 @@
 // lib/services/auth_service.dart
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'websocket_service.dart';
 
 class AuthService {
   static const String baseUrl = 'http://192.168.3.128:8080'; // WiFi IP address for laptop
@@ -64,6 +66,38 @@ class AuthService {
     } catch (e) {
       print('Verify error: $e');
       throw Exception('Error during verification: $e');
+    }
+  }
+  
+  // Connect to WebSocket after successful login
+  Future<void> connectWebSocket() async {
+    try {
+      final webSocketService = WebSocketService();
+      await webSocketService.connect();
+    } catch (e) {
+      print('Error connecting to WebSocket: $e');
+    }
+  }
+  
+  // Disconnect from WebSocket on logout
+  Future<bool> logout() async {
+    try {
+      // Disconnect from WebSocket
+      final webSocketService = WebSocketService();
+      webSocketService.disconnect();
+      
+      // Clear stored credentials
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('token');
+      await prefs.remove('userId');
+      await prefs.remove('username');
+      await prefs.remove('email');
+      await prefs.remove('role');
+      
+      return true;
+    } catch (e) {
+      print('Error during logout: $e');
+      return false;
     }
   }
 }

@@ -50,35 +50,56 @@ public class NotificationController {
             }
 
             Notification notification = notificationService.createNotification(title, message, type, senderId, recipientIds);
-            return ResponseEntity.ok(notification);
+            User sender = userRepository.findById(senderId).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            Map<String, Object> notificationResponse = buildNotificationResponse(notification, senderProfilePicture);
+            return ResponseEntity.ok(notificationResponse);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("Error sending notification: " + e.getMessage());
         }
     }
     
     @GetMapping("/user/{userId}")
-    public ResponseEntity<List<Notification>> getUserNotifications(@PathVariable String userId) {
+    public ResponseEntity<?> getUserNotifications(@PathVariable String userId) {
         List<Notification> notifications = notificationService.getNotificationsForUser(userId);
-        return ResponseEntity.ok(notifications);
+        List<Map<String, Object>> response = notifications.stream().map(n -> {
+            User sender = userRepository.findById(n.getSenderId()).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            return buildNotificationResponse(n, senderProfilePicture);
+        }).toList();
+        return ResponseEntity.ok(response);
     }
     
     @GetMapping("/unread/{userId}")
-    public ResponseEntity<List<Notification>> getUnreadNotifications(@PathVariable String userId) {
+    public ResponseEntity<?> getUnreadNotifications(@PathVariable String userId) {
         List<Notification> notifications = notificationService.getUnreadNotificationsForUser(userId);
-        return ResponseEntity.ok(notifications);
+        List<Map<String, Object>> response = notifications.stream().map(n -> {
+            User sender = userRepository.findById(n.getSenderId()).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            return buildNotificationResponse(n, senderProfilePicture);
+        }).toList();
+        return ResponseEntity.ok(response);
     }
     
     @GetMapping("/sent/{senderId}")
-    public ResponseEntity<List<Notification>> getSentNotifications(@PathVariable String senderId) {
+    public ResponseEntity<?> getSentNotifications(@PathVariable String senderId) {
         List<Notification> notifications = notificationService.getSentNotifications(senderId);
-        return ResponseEntity.ok(notifications);
+        List<Map<String, Object>> response = notifications.stream().map(n -> {
+            User sender = userRepository.findById(n.getSenderId()).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            return buildNotificationResponse(n, senderProfilePicture);
+        }).toList();
+        return ResponseEntity.ok(response);
     }
     
     @PutMapping("/{notificationId}/read")
     public ResponseEntity<?> markAsRead(@PathVariable String notificationId) {
         try {
             Notification notification = notificationService.markAsRead(notificationId);
-            return ResponseEntity.ok(notification);
+            User sender = userRepository.findById(notification.getSenderId()).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            Map<String, Object> notificationResponse = buildNotificationResponse(notification, senderProfilePicture);
+            return ResponseEntity.ok(notificationResponse);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("Error marking notification as read: " + e.getMessage());
         }
@@ -129,7 +150,10 @@ public class NotificationController {
                     technicianIds
             );
             
-            return ResponseEntity.status(HttpStatus.CREATED).body(notification);
+            User sender = userRepository.findById(senderId).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            Map<String, Object> notificationResponse = buildNotificationResponse(notification, senderProfilePicture);
+            return ResponseEntity.status(HttpStatus.CREATED).body(notificationResponse);
         } catch (Exception e) {
             Map<String, String> response = new HashMap<>();
             response.put("error", "Failed to send machine failure notification: " + e.getMessage());
@@ -162,7 +186,10 @@ public class NotificationController {
                     managerIds
             );
             
-            return ResponseEntity.status(HttpStatus.CREATED).body(notification);
+            User sender = userRepository.findById(senderId).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            Map<String, Object> notificationResponse = buildNotificationResponse(notification, senderProfilePicture);
+            return ResponseEntity.status(HttpStatus.CREATED).body(notificationResponse);
         } catch (Exception e) {
             Map<String, String> response = new HashMap<>();
             response.put("error", "Failed to send production delay notification: " + e.getMessage());
@@ -195,7 +222,10 @@ public class NotificationController {
                     recipients
             );
             
-            return ResponseEntity.status(HttpStatus.CREATED).body(notification);
+            User sender = userRepository.findById(senderId).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            Map<String, Object> notificationResponse = buildNotificationResponse(notification, senderProfilePicture);
+            return ResponseEntity.status(HttpStatus.CREATED).body(notificationResponse);
         } catch (Exception e) {
             Map<String, String> response = new HashMap<>();
             response.put("error", "Failed to send efficiency drop notification: " + e.getMessage());
@@ -228,7 +258,10 @@ public class NotificationController {
                     allUserIds
             );
             
-            return ResponseEntity.status(HttpStatus.CREATED).body(notification);
+            User sender = userRepository.findById(senderId).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            Map<String, Object> notificationResponse = buildNotificationResponse(notification, senderProfilePicture);
+            return ResponseEntity.status(HttpStatus.CREATED).body(notificationResponse);
         } catch (Exception e) {
             Map<String, String> response = new HashMap<>();
             response.put("error", "Failed to send emergency notification: " + e.getMessage());
@@ -265,7 +298,10 @@ public class NotificationController {
             );
             
             System.out.println("Successfully created urgent meeting notification with ID: " + notification.getId());
-            return ResponseEntity.status(HttpStatus.CREATED).body(notification);
+            User sender = userRepository.findById(senderId).orElse(null);
+            String senderProfilePicture = sender != null ? sender.getProfilePicture() : null;
+            Map<String, Object> notificationResponse = buildNotificationResponse(notification, senderProfilePicture);
+            return ResponseEntity.status(HttpStatus.CREATED).body(notificationResponse);
         } catch (Exception e) {
             System.out.println("Error in sendUrgentMeetingNotification: " + e.getMessage());
             e.printStackTrace();
@@ -298,5 +334,20 @@ public class NotificationController {
     private boolean isUserRole(String userId, String role) {
         User user = userRepository.findById(userId).orElse(null);
         return user != null && user.getRole().equals(role) && user.isVerified() && user.isApproved();
+    }
+
+    // Helper method to build notification response
+    private Map<String, Object> buildNotificationResponse(Notification notification, String senderProfilePicture) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", notification.getId());
+        map.put("title", notification.getTitle());
+        map.put("message", notification.getMessage());
+        map.put("senderId", notification.getSenderId());
+        map.put("recipientIds", notification.getRecipientIds());
+        map.put("type", notification.getType());
+        map.put("createdAt", notification.getCreatedAt());
+        map.put("isRead", notification.isRead());
+        map.put("senderProfilePicture", senderProfilePicture);
+        return map;
     }
 } 

@@ -9,6 +9,7 @@ public class Message {
     @Id
     private String id;
     private String senderId;
+    private String receiverId;
     private String chatGroupId;
     private String content;
     private LocalDateTime timestamp;
@@ -39,6 +40,14 @@ public class Message {
 
     public void setSenderId(String senderId) {
         this.senderId = senderId;
+    }
+
+    public String getReceiverId() {
+        return receiverId;
+    }
+
+    public void setReceiverId(String receiverId) {
+        this.receiverId = receiverId;
     }
 
     public String getChatGroupId() {
