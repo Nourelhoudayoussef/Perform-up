@@ -13,4 +13,6 @@ public interface MachineFailureRepository extends MongoRepository<MachineFailure
     
     @Query("{ 'technician_id' : ?0, 'date' : ?1 }")
     List<MachineFailure> findByTechnician_idAndDate(String technician_id, String date);
+    
+    List<MachineFailure> findByDate(String date);
 }

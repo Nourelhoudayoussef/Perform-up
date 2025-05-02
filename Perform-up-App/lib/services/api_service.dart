@@ -19,13 +19,6 @@ extension MapStringDynamicExtension on Map<String, dynamic> {
 }
 
 class ApiService {
-<<<<<<< HEAD
-  // For Android Emulator use 10.0.2.2
-  // For real device testing, use your computer's actual IP address
-  static const String baseUrl = 'http://192.168.3.128:8080';
-  // If testing on real device, comment above line and uncomment below line with your computer's IP
-  // static const String baseUrl = 'http://YOUR_COMPUTER_IP:8080';
-=======
   // Check if running on emulator or real device and use appropriate URL
   static String get baseUrl {
     if (Platform.isAndroid) {
@@ -36,7 +29,7 @@ class ApiService {
     return 'http://10.0.2.2:8080'; // Fallback
   }
 
->>>>>>> master
+
   static const Duration _minRequestInterval = Duration(milliseconds: 500);
   DateTime _lastRequestTime = DateTime.now().subtract(const Duration(seconds: 1));
 

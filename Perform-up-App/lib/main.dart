@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:pfe/base_app.dart';
 import 'package:pfe/screens/authentication/login_screen.dart';
 import 'package:pfe/screens/authentication/signup_screen.dart';
 import 'package:pfe/screens/authentication/reset_password_screen.dart';
@@ -10,6 +11,8 @@ import 'package:pfe/screens/chat/group_chat_screen.dart';
 import 'package:pfe/screens/chat/group_chats_screen.dart';
 import 'package:pfe/screens/notifications/role_based_notification_screen.dart';
 import 'package:pfe/screens/profile/edit_profile_screen.dart';
+import 'package:pfe/screens/profile/profile_screen.dart';
+import 'package:pfe/screens/reporting/reporting.dart';
 import 'package:pfe/services/websocket_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/technician/intervention_screen.dart';
@@ -61,27 +64,26 @@ class MyApp extends StatelessWidget {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
-            // Show InterventionScreen for technicians, ChatListScreen for others
-            return snapshot.data == UserRole.TECHNICIAN 
-                ? const InterventionScreen() 
-                : const ChatListScreen();
+            // Show InterventionScreen for technicians with currentIndex 0, ChatListScreen for others with currentIndex 1
+            return BaseLayout(
+              child: snapshot.data == UserRole.TECHNICIAN 
+                  ? const InterventionScreen() 
+                  : const ChatListScreen(),
+              currentIndex: snapshot.data == UserRole.TECHNICIAN ? 0 : 1,
+            );
           },
         ),
-        '/profile': (context) => const EditProfileScreen(),
+        '/profile': (context) => BaseLayout(child: EditProfileScreen(), currentIndex: 3),
         '/chat': (context) {
           final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
           if (args == null) {
-            return FutureBuilder<UserRole>(
-              future: _getUserRole(null),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                return snapshot.data == UserRole.TECHNICIAN 
-                    ? const InterventionScreen() 
-                    : const ChatListScreen();
-              },
-            );
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Error Getting to user"))
+              );
+            });
+            return const SizedBox.shrink();
           }
           return ChatScreen(
             userId: args['userId']?.toString() ?? '',
@@ -112,6 +114,8 @@ class MyApp extends StatelessWidget {
           );
         },
         '/interventions': (context) => const InterventionScreen(),
+        '/reporting': (context) => BaseLayout(child: ReportingScreen(), currentIndex:2),
+        '/chatlist': (context) => BaseLayout(child: ChatListScreen(), currentIndex: 1),
       },
     );
   }

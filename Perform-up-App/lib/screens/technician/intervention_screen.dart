@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../../services/intervention_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class InterventionScreen extends StatefulWidget {
   const InterventionScreen({super.key});
@@ -20,28 +22,15 @@ class _InterventionScreenState extends State<InterventionScreen> {
   bool _isLoading = true;
   int _currentIndex = 2; // Set to 2 for home icon
   
-  // Mock data - Replace with API data later
-  int totalTasks = 3;
-  int avgTime = 65;
-  int machinesChecked = 2;
+  // Service instance
+  final _interventionService = InterventionService();
   
-  List<Map<String, dynamic>> recentInterventions = [
-    {
-      'reference': 'W2-C3-M01',
-      'timeTaken': 20,
-      'description': 'Machine won\'t start, Inspected motor.',
-    },
-    {
-      'reference': 'W2-C3-M01',
-      'timeTaken': 15,
-      'description': 'Motor Overheating, Oil the machine.',
-    },
-    {
-      'reference': 'W2-C3-M01',
-      'timeTaken': 30,
-      'description': 'Timing Off, May need parts replacement.',
-    },
-  ];
+  // Statistics
+  int totalTasks = 0;
+  int avgTime = 0;
+  int machinesChecked = 0;
+  
+  List<Map<String, dynamic>> recentInterventions = [];
 
   @override
   void initState() {
@@ -49,59 +38,121 @@ class _InterventionScreenState extends State<InterventionScreen> {
     _loadData();
   }
 
-  // TODO: Implement API integration
   Future<void> _loadData() async {
-    // API Integration Point:
-    // 1. Fetch technician's statistics (total tasks, avg time, machines checked)
-    // 2. Fetch recent interventions
-    // Example API endpoints:
-    // - GET /api/technician/statistics
-    // - GET /api/technician/interventions
-    
-    setState(() {
-      _isLoading = false;
-    });
+    try {
+      setState(() => _isLoading = true);
+      
+      // Load recent interventions first
+      final interventions = await _interventionService.getRecentInterventions();
+      
+      // Calculate statistics from interventions
+      final uniqueMachines = interventions.map((e) => e['machineReference']).toSet();
+      final totalTime = interventions.fold<int>(0, (sum, item) => sum + (item['timeTaken'] as int));
+      final averageTime = interventions.isEmpty ? 0 : (totalTime / interventions.length).round();
+      
+      if (mounted) {
+        setState(() {
+          totalTasks = interventions.length;
+          avgTime = averageTime;
+          machinesChecked = uniqueMachines.length;
+          recentInterventions = interventions;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading data: $e')),
+        );
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
-  // TODO: Implement API integration
   Future<void> _submitIntervention() async {
-    if (_machineRefController.text.isEmpty ||
-        _timeTakenController.text.isEmpty ||
-        _descriptionController.text.isEmpty) {
+    // Trim whitespace from inputs
+    final machineRef = _machineRefController.text.trim();
+    final timeTaken = _timeTakenController.text.trim();
+    final description = _descriptionController.text.trim();
+
+    // Validate inputs
+    if (machineRef.isEmpty || timeTaken.isEmpty || description.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill all fields')),
       );
       return;
     }
 
-    // API Integration Point:
-    // POST /api/technician/interventions
-    // Request body should include:
-    // - machineReference
-    // - timeTaken
-    // - description
-    // - technicianId (from authentication)
+    // Validate machine reference format (should be like W1-C2-M3)
+    final machineRefRegex = RegExp(r'^W\d+-C\d+-M\d+$');
+    if (!machineRefRegex.hasMatch(machineRef)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Machine reference should be in format: W1-C2-M3'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
-    // Mock success - Replace with actual API call
-    setState(() {
-      recentInterventions.insert(0, {
-        'reference': _machineRefController.text,
-        'timeTaken': int.parse(_timeTakenController.text),
-        'description': _descriptionController.text,
-      });
-      _isAddingIntervention = false;
-      totalTasks++;
-    });
+    // Validate time taken is a positive number
+    int? parsedTime;
+    try {
+      parsedTime = int.parse(timeTaken);
+      if (parsedTime <= 0) throw FormatException('Time must be positive');
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Time taken must be a positive number'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
-    // Clear form
-    _machineRefController.clear();
-    _timeTakenController.clear();
-    _descriptionController.clear();
+    try {
+      setState(() => _isLoading = true);
+      
+      // Create new intervention with sanitized inputs
+      final newIntervention = await _interventionService.createIntervention(
+        machineReference: machineRef,
+        timeTaken: parsedTime,
+        description: description,
+      );
+
+      // Reload data to get updated statistics and interventions
+      await _loadData();
+
+      if (mounted) {
+        setState(() => _isAddingIntervention = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Intervention added successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+
+      // Clear form
+      _machineRefController.clear();
+      _timeTakenController.clear();
+      _descriptionController.clear();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error submitting intervention: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildStatCard(IconData icon, String value, String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -118,24 +169,30 @@ class _InterventionScreenState extends State<InterventionScreen> {
         children: [
           Row(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 16, color: const Color(0xFF6BBFB5)),
-              const SizedBox(width: 8),
-              Text(
-                value,
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
+              Icon(icon, size: 14, color: const Color(0xFF6BBFB5)),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  value,
+                  style: GoogleFonts.poppins(
+                    fontSize: 23,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 4),
           Text(
             label,
             style: GoogleFonts.poppins(
               fontSize: 12,
-              color: Colors.black54,
+              color: Colors.black,
             ),
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -243,6 +300,18 @@ class _InterventionScreenState extends State<InterventionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Debug code to check role
+    SharedPreferences.getInstance().then((prefs) {
+      final role = prefs.getString('role');
+      print('DEBUG - Current role in intervention_screen: $role');
+      print('DEBUG - All stored preferences:');
+      print('token: ${prefs.getString('token') != null ? 'exists' : 'missing'}');
+      print('email: ${prefs.getString('email')}');
+      print('role: ${prefs.getString('role')}');
+      print('userId: ${prefs.getString('userId')}');
+      print('username: ${prefs.getString('username')}');
+    });
+
     return Scaffold(
       backgroundColor: const Color(0xFFF0F7F5),
       appBar: AppBar(
@@ -274,20 +343,38 @@ class _InterventionScreenState extends State<InterventionScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
-                      _buildStatCard(
-                        FontAwesomeIcons.tasks,
-                        '$totalTasks Tasks',
-                        'done',
+                      Expanded(
+                        flex: 1,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: _buildStatCard(
+                            FontAwesomeIcons.tasks,
+                            '$totalTasks',
+                            'Tasks done',
+                          ),
+                        ),
                       ),
-                      _buildStatCard(
-                        FontAwesomeIcons.clock,
-                        '$avgTime min',
-                        'Avg time',
+                      Expanded(
+                        flex: 1,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: _buildStatCard(
+                            FontAwesomeIcons.clock,
+                            '$avgTime',
+                            'Avg min',
+                          ),
+                        ),
                       ),
-                      _buildStatCard(
-                        FontAwesomeIcons.wrench,
-                        '$machinesChecked Machines',
-                        'Checked',
+                      Expanded(
+                        flex: 1,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: _buildStatCard(
+                            FontAwesomeIcons.wrench,
+                            '$machinesChecked',
+                            'Machines',
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -336,16 +423,35 @@ class _InterventionScreenState extends State<InterventionScreen> {
                             children: [
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    intervention['reference'],
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w500,
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          intervention['machineReference'] ?? '',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          intervention['description'] ?? '',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 14,
+                                            color: Colors.black87,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
                                     ),
                                   ),
+                                  const SizedBox(width: 8),
                                   Text(
-                                    '${intervention['timeTaken']} min',
+                                    '${intervention['timeTaken'] ?? 0} min',
                                     style: GoogleFonts.poppins(
                                       fontSize: 14,
                                       color: Colors.black54,
@@ -353,14 +459,16 @@ class _InterventionScreenState extends State<InterventionScreen> {
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 8),
-                              Text(
-                                intervention['description'],
-                                style: GoogleFonts.poppins(
-                                  fontSize: 14,
-                                  color: Colors.black87,
+                              if (intervention['date'] != null) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  _formatDate(intervention['date']),
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    color: Colors.black54,
+                                  ),
                                 ),
-                              ),
+                              ],
                             ],
                           ),
                         ),
@@ -368,55 +476,7 @@ class _InterventionScreenState extends State<InterventionScreen> {
                 ],
               ),
             ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        selectedItemColor: const Color(0xFF6BBFB5),
-        unselectedItemColor: const Color(0xA6000000),
-        backgroundColor: const Color(0xFFF0F7F5),
-        type: BottomNavigationBarType.fixed,
-        elevation: 5,
-        showSelectedLabels: false,
-        showUnselectedLabels: false,
-        onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-          switch (index) {
-            case 0:
-              // File icon - No action needed
-              break;
-            case 1:
-              // Chat icon - Navigate to chat list
-              Navigator.pushNamed(context, '/chats');
-              break;
-            case 2:
-              // Home icon - Already on home screen
-              break;
-            case 3:
-              // Profile icon - Navigate to profile
-              Navigator.pushNamed(context, '/profile');
-              break;
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.solidFileLines, size: 24),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.solidCommentDots, size: 24),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.home, size: 24),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.userAlt, size: 24),
-            label: "",
-          ),
-        ],
-      ),
+      
     );
   }
 
@@ -426,5 +486,15 @@ class _InterventionScreenState extends State<InterventionScreen> {
     _timeTakenController.dispose();
     _descriptionController.dispose();
     super.dispose();
+  }
+
+  // Add this method to format the date
+  String _formatDate(String dateStr) {
+    try {
+      final date = DateTime.parse(dateStr);
+      return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+    } catch (e) {
+      return dateStr;
+    }
   }
 } 

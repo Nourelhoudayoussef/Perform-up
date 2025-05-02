@@ -327,47 +327,7 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        selectedItemColor: Color(0xFF6BBFB5),
-        unselectedItemColor: Color(0xA6000000),
-        backgroundColor: Color(0xFFF0F7F5),
-        type: BottomNavigationBarType.fixed,
-        elevation: 0,
-        showSelectedLabels: false,
-        showUnselectedLabels: false,
-        onTap: _onItemTapped,
-        items: [
-          BottomNavigationBarItem(
-            icon: Icon(
-              FontAwesomeIcons.solidFileLines,
-              size: 24,
-            ),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(
-              FontAwesomeIcons.solidCommentDots,
-              size: 24,
-            ),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(
-              FontAwesomeIcons.home,
-              size: 24,
-            ),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(
-              FontAwesomeIcons.userAlt,
-              size: 24,
-            ),
-            label: "",
-          ),
-        ],
-      ),
+      
     );
   }
 

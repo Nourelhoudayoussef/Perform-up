@@ -254,50 +254,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 3, // Profile icon selected
-        selectedItemColor: Color(0xFF6BBFB5),
-        unselectedItemColor: Color(0xA6000000),
-        backgroundColor: Color(0xFFF0F7F5),
-        type: BottomNavigationBarType.fixed,
-        elevation: 5,
-        showSelectedLabels: false,
-        showUnselectedLabels: false,
-        onTap: (index) {
-          switch (index) {
-            case 0:
-              // Action for File icon
-              break;
-            case 1:
-              Navigator.pushReplacementNamed(context, '/chats');
-              break;
-            case 2:
-              Navigator.pushReplacementNamed(context, '/chats');
-              break;
-            case 3:
-              // Already on profile
-              break;
-          }
-        },
-        items: [
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.solidFileLines, size: 24),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.solidCommentDots, size: 24),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.home, size: 24),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.userAlt, size: 24),
-            label: "",
-          ),
-        ],
-      ),
+      
     );
   }
 

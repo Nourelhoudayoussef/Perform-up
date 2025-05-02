@@ -178,11 +178,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         shadowColor: Colors.black.withOpacity(0.25),
         toolbarHeight: 100,
         leadingWidth: 56, // Default width of IconButton
-        leading: IconButton(
-          icon:
-              const Icon(FontAwesomeIcons.arrowLeft, color: Color(0xC5000000)),
-          onPressed: () => Navigator.pop(context),
-        ),
+        
         title: Padding(
           padding: EdgeInsets.only(left: 0), // Adjust the spacing here
           child: Text(
@@ -374,88 +370,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: BottomNavBar(),
+      
     );
   }
 }
 
-class BottomNavBar extends StatefulWidget {
-  const BottomNavBar({super.key});
-
-  @override
-  _BottomNavBarState createState() => _BottomNavBarState();
-}
-
-class _BottomNavBarState extends State<BottomNavBar> {
-  int _currentIndex = 1;
-
-  void _onItemTapped(int index) {
-    setState(() {
-      _currentIndex = index;
-    });
-
-    switch (index) {
-      case 0:
-        // Action for File icon
-        print("File icon tapped");
-        break;
-      case 1:
-        // Action for Comment icon
-        Navigator.pushNamed(context, '/chats');
-        break;
-      case 2:
-        // Action for Home icon
-        Navigator.pushNamed(context, '/chats');
-        break;
-      case 3:
-        // Action for User icon
-        Navigator.pushNamed(context, '/profile');
-        break;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return BottomNavigationBar(
-      currentIndex: _currentIndex,
-      selectedItemColor: Color(0xFF6BBFB5),
-      unselectedItemColor: Color(0xA6000000),
-      backgroundColor: Color(0xFFF0F7F5),
-      type: BottomNavigationBarType.fixed,
-      elevation: 5,
-      showSelectedLabels: false,
-      showUnselectedLabels: false,
-      onTap: _onItemTapped,
-      items: [
-        BottomNavigationBarItem(
-          icon: Icon(
-            FontAwesomeIcons.solidFileLines,
-            size: 24,
-          ),
-          label: "",
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(
-            FontAwesomeIcons.solidCommentDots,
-            size: 24,
-          ),
-          label: "",
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(
-            FontAwesomeIcons.home,
-            size: 24,
-          ),
-          label: "",
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(
-            FontAwesomeIcons.userAlt,
-            size: 24,
-          ),
-          label: "",
-        ),
-      ],
-    );
-  }
-}

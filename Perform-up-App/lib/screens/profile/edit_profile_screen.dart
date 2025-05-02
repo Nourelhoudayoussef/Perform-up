@@ -8,6 +8,13 @@ import 'package:pfe/services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
+// Extension method for String capitalization
+extension StringExtension on String {
+  String capitalize() {
+    return "${this[0].toUpperCase()}${substring(1).toLowerCase()}";
+  }
+}
+
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({Key? key}) : super(key: key);
 
@@ -30,6 +37,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String? _userEmail;
   String? _currentUsername;
   String? _profilePicture;
+  String? _userRole;
   bool _isPasswordVisible = false;
   File? _imageFile;
   final ImagePicker _picker = ImagePicker();
@@ -48,6 +56,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       _userEmail = prefs.getString('email');
       _currentUsername = prefs.getString('username');
       _profilePicture = userId != null ? prefs.getString('profilePicture_$userId') : null;
+      final role = prefs.getString('role') ?? 'user';
+      _userRole = role.toLowerCase().capitalize();
       _usernameController.text = _currentUsername ?? '';
     });
   }
@@ -354,7 +364,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    "Supervisor",
+                    _userRole!,
                     style: GoogleFonts.poppins(
                       fontSize: 16,
                       color: Color(0x99000000),
@@ -513,50 +523,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 3, // Profile icon selected
-        selectedItemColor: Color(0xFF6BBFB5),
-        unselectedItemColor: Color(0xA6000000),
-        backgroundColor: Color(0xFFF0F7F5),
-        type: BottomNavigationBarType.fixed,
-        elevation: 5,
-        showSelectedLabels: false,
-        showUnselectedLabels: false,
-        onTap: (index) {
-          switch (index) {
-            case 0:
-              // Action for File icon
-              break;
-            case 1:
-              Navigator.pushReplacementNamed(context, '/chats');
-              break;
-            case 2:
-              Navigator.pushReplacementNamed(context, '/chats');
-              break;
-            case 3:
-              // Already on profile
-              break;
-          }
-        },
-        items: [
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.solidFileLines, size: 24),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.solidCommentDots, size: 24),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.home, size: 24),
-            label: "",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(FontAwesomeIcons.userAlt, size: 24),
-            label: "",
-          ),
-        ],
-      ),
+      
     );
   }
 
