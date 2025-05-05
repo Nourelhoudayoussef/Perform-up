@@ -169,7 +169,13 @@ class InterventionService {
     print('Response body: ${response.body}');
 
     if (response.statusCode == 201 || response.statusCode == 200) {
-      return json.decode(response.body);
+      final contentType = response.headers['content-type'] ?? '';
+      if (contentType.contains('application/json')) {
+        return json.decode(response.body);
+      } else {
+        // Return a map with the plain text message
+        return {'message': response.body};
+      }
     } else if (response.statusCode == 401) {
       throw Exception('Unauthorized: Invalid or expired token');
     } else if (response.statusCode == 403) {
