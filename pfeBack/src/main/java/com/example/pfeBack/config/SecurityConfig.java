@@ -46,6 +46,7 @@ public class SecurityConfig {
                 // Public endpoints
                 .requestMatchers("/auth/**").permitAll()
                 .requestMatchers("/test/**", "/api/test/**", "/actuator/**").permitAll()
+                .requestMatchers("/api/chat").permitAll()
                 
                 // WebSocket endpoints - explicitly permit all WebSocket related paths
                 .requestMatchers("/ws/**", "/ws").permitAll() 

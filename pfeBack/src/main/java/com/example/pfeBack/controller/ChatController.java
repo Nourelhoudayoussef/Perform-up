@@ -6,11 +6,14 @@ import com.example.pfeBack.model.User;
 import com.example.pfeBack.repository.ChatGroupRepository;
 import com.example.pfeBack.repository.MessageRepository;
 import com.example.pfeBack.repository.UserRepository;
+import com.example.pfeBack.service.ChatService;
+import lombok.Data;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -35,6 +38,12 @@ public class ChatController {
 
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
+
+    private final ChatService chatService;
+
+    public ChatController(ChatService chatService) {
+        this.chatService = chatService;
+    }
 
     @PostMapping("/groups")
     public ResponseEntity<?> createChatGroup(@RequestBody Map<String, Object> request) {
@@ -609,5 +618,16 @@ public class ChatController {
         }
         
         return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/chat")
+    public Mono<ResponseEntity<String>> chat(@RequestBody ChatRequest request) {
+        return chatService.getChatResponse(request.getQuestion())
+                .map(ResponseEntity::ok);
+    }
+
+    @Data
+    public static class ChatRequest {
+        private String question;
     }
 }

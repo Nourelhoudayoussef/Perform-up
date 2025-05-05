@@ -41,7 +41,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         "/admin/check-approval",
         "/admin/set-approval",
         "/test",
-        "/api/test"
+        "/api/test",
+        "/api/chat"
     };
 
     @Override
