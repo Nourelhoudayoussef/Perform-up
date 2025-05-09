@@ -23,7 +23,7 @@ public class OpenRouterConfig {
 
         return WebClient.builder()
                 .baseUrl("https://openrouter.ai/api/v1")
-                .defaultHeader("Authorization", "Bearer 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")
+                .defaultHeader("Authorization", "Bearer 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")
                 .defaultHeader("HTTP-Referer", "http://localhost:8080")
                 .defaultHeader("X-Title", "PFE App")
                 .clientConnector(new ReactorClientHttpConnector(httpClient))

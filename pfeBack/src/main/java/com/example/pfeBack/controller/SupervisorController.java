@@ -44,174 +44,87 @@ public class SupervisorController {
     
     @Autowired
     private UserRepository userRepository;
-    
-    // Set daily target for a product
+
+    // Set target by date and orderRef
     @PostMapping("/target")
     @PreAuthorize("hasRole('SUPERVISOR')")
-    public ResponseEntity<?> setDailyTarget(@RequestBody DailyTargetRequestDTO targetDTO, Authentication authentication) {
-        // Validate order reference
-        Optional<OrderReference> orderRef = orderReferenceRepository.findByOrderRef(targetDTO.getOrderRef());
-        if (!orderRef.isPresent()) {
-            return ResponseEntity.badRequest().body("Invalid order reference");
-        }
-        
-        // Get supervisor info
-        Optional<User> supervisorOpt = userRepository.findByEmail(authentication.getName());
-        if (!supervisorOpt.isPresent()) {
-            return ResponseEntity.badRequest().body("Supervisor not found");
-        }
-        
-        User supervisor = supervisorOpt.get();
-        
-        // Create or update performance entries for all hours of operation (8:00 AM to 4:00 PM)
-        String[] operationHours = {"08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00"};
-        
-        for (String hour : operationHours) {
-            // Check if entry already exists
-            List<Performance> existingPerformances = performanceRepository.findByOrderRefAndDate(targetDTO.getOrderRef(), targetDTO.getDate());
-            
-            boolean hourExists = existingPerformances.stream()
-                .anyMatch(p -> p.getHour().equals(hour));
-            
-            if (!hourExists) {
-                // For each workshop and chain combination
-                for (int workshop = 1; workshop <= 3; workshop++) {
-                    for (int chain = 1; chain <= 3; chain++) {
-                        Performance performance = new Performance(
-                            supervisor.getId(),
-                            targetDTO.getDate(),
-                            hour,
-                            "Workshop " + workshop,
-                            "Chain " + chain,
-                            0, // No production yet
-                            0, // No defects yet
-                            "", // No defect name yet
-                            targetDTO.getTargetQuantity(),
-                            targetDTO.getOrderRef()
-                        );
-                        performanceRepository.save(performance);
-                    }
-                }
-            } else {
-                // Update target quantity for existing entries
-                for (Performance performance : existingPerformances) {
-                    performance.setProductionTarget(targetDTO.getTargetQuantity());
-                    performanceRepository.save(performance);
-                }
-            }
-        }
-        
-        // Notify clients that targets have been updated
-        webSocketController.broadcastTargetUpdate(targetDTO.getDate(), targetDTO);
-        
-        return ResponseEntity.ok("Daily target set successfully");
-    }
-
-    // Get daily performance for a specific date
-    @GetMapping("/performance/{date}")
-    @PreAuthorize("hasRole('SUPERVISOR')")
-    public ResponseEntity<List<Performance>> getDailyPerformance(@PathVariable String date) {
-        List<Performance> performances = performanceRepository.findByDate(date);
-        return ResponseEntity.ok(performances);
-    }
-
-    // Get performance by workshop and chain (only for current day)
-    @GetMapping("/performance/workshop/{workshop}/chain/{chain}")
-    @PreAuthorize("hasRole('SUPERVISOR')")
-    public ResponseEntity<List<Performance>> getPerformanceByWorkshopAndChain(
-            @PathVariable int workshop,
-            @PathVariable int chain) {
-        String workshopFormat = "Workshop " + workshop;
-        String chainFormat = "Chain " + chain;
-        
-        // Get current date in the format "yyyy-MM-dd"
+    public ResponseEntity<?> setTarget(@RequestParam Integer orderRef, @RequestParam int target) {
         String today = java.time.LocalDate.now().toString();
-        
-        List<Performance> performances = performanceRepository.findByWorkshopAndChainAndDate(
-            workshopFormat, chainFormat, today);
+        Performance newPerformance = new Performance();
+        newPerformance.setOrderRef(orderRef);
+        newPerformance.setDate(today);
+        newPerformance.setProductionTarget(target);
+        newPerformance.setProduced(0);
+        newPerformance.setDefectList(new ArrayList<>());
+        newPerformance.setWorkshop(null);
+        newPerformance.setChain(null);
+        newPerformance.setHour(null);
+        newPerformance.setSupervisorId(null);
+        performanceRepository.save(newPerformance);
+        return ResponseEntity.ok("Target set and performance record created");
+    }
+
+    // Get daily performance with filters
+    @GetMapping("/performance")
+    @PreAuthorize("hasRole('SUPERVISOR')")
+    public ResponseEntity<List<Performance>> getPerformance(
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false) Integer orderRef,
+            @RequestParam(required = false) Integer workshop,
+            @RequestParam(required = false) Integer chain) {
+        List<Performance> performances = performanceRepository.findAll();
+        if (date != null) {
+            performances = performances.stream().filter(p -> p.getDate().equals(date)).toList();
+        }
+        if (orderRef != null) {
+            performances = performances.stream().filter(p -> p.getOrderRef() != null && p.getOrderRef().equals(orderRef)).toList();
+        }
+        if (workshop != null) {
+            performances = performances.stream().filter(p -> p.getWorkshop() != null && p.getWorkshop().equals("Workshop " + workshop)).toList();
+        }
+        if (chain != null) {
+            performances = performances.stream().filter(p -> p.getChain() != null && p.getChain().equals("Chain " + chain)).toList();
+        }
         return ResponseEntity.ok(performances);
     }
 
-    // Record performance data
+    // Record performance data (workshop and chain as int, no productionTarget)
     @PostMapping("/performance")
     @PreAuthorize("hasRole('SUPERVISOR')")
     public ResponseEntity<?> recordPerformance(@RequestBody PerformanceDTO performanceDTO, Authentication authentication) {
-        // Validate order reference
-        Optional<OrderReference> orderRef = orderReferenceRepository.findByOrderRef(performanceDTO.getOrderRef());
-        if (!orderRef.isPresent()) {
-            return ResponseEntity.badRequest().body("Invalid order reference");
-        }
-        
-        // Get supervisor info
+        String today = java.time.LocalDate.now().toString();
         Optional<User> supervisorOpt = userRepository.findByEmail(authentication.getName());
         if (!supervisorOpt.isPresent()) {
             return ResponseEntity.badRequest().body("Supervisor not found");
         }
-        
         User supervisor = supervisorOpt.get();
-        
-        // Validate workshop and chain format
-        if (!isValidWorkshopFormat(performanceDTO.getWorkshop()) || !isValidChainFormat(performanceDTO.getChain())) {
-            return ResponseEntity.badRequest().body("Invalid workshop or chain format. Expected 'Workshop X' and 'Chain Y'");
+        if (performanceDTO.getWorkshopInt() < 1 || performanceDTO.getWorkshopInt() > 3 || performanceDTO.getChainInt() < 1 || performanceDTO.getChainInt() > 3) {
+            return ResponseEntity.badRequest().body("Invalid workshop or chain. Must be 1, 2, or 3");
         }
-        
-        // Validate hour format (8:00 AM to 4:00 PM)
         if (!isValidHourFormat(performanceDTO.getHour())) {
             return ResponseEntity.badRequest().body("Invalid hour format. Expected format between 08:00 and 16:00");
         }
-        
-        // Always use current date in format YYYY-MM-DD
-        String today = java.time.LocalDate.now().toString();
-        
-        // Find existing performance record or create new one
-        List<Performance> existingPerformances = performanceRepository.findByWorkshopAndChainAndDate(
-            performanceDTO.getWorkshop(), 
-            performanceDTO.getChain(), 
-            today
-        );
-        
-        Performance performance = null;
-        
-        for (Performance existing : existingPerformances) {
-            if (existing.getHour().equals(performanceDTO.getHour()) && 
-                existing.getOrderRef().equals(performanceDTO.getOrderRef())) {
-                performance = existing;
-                break;
-            }
-        }
-        
-        // Convert DefectDTO list to Defect list
+        String workshopStr = "Workshop " + performanceDTO.getWorkshopInt();
+        String chainStr = "Chain " + performanceDTO.getChainInt();
         List<Defect> defects = new ArrayList<>();
         if (performanceDTO.getDefectList() != null) {
             for (DefectDTO defectDTO : performanceDTO.getDefectList()) {
                 defects.add(new Defect(defectDTO.getDefectType(), defectDTO.getCount()));
             }
         }
-        
-        if (performance == null) {
-            // Create new performance record using the constructor with defect list
-            performance = new Performance(
-                supervisor.getId(),
-                today,  // Use today's date
-                performanceDTO.getHour(),
-                performanceDTO.getWorkshop(),
-                performanceDTO.getChain(),
-                performanceDTO.getProduced(),
-                defects,
-                performanceDTO.getProductionTarget(),
-                performanceDTO.getOrderRef()
-            );
-        } else {
-            // Update existing performance record
-            performance.setProduced(performanceDTO.getProduced());
-            performance.setDefectList(defects);
-        }
-        
+        Performance performance = new Performance(
+            supervisor.getId(),
+            today,
+            performanceDTO.getHour(),
+            workshopStr,
+            chainStr,
+            performanceDTO.getProduced(),
+            defects,
+            0, // productionTarget defaulted to 0
+            performanceDTO.getOrderRef()
+        );
         performanceRepository.save(performance);
-        
-        // Notify clients about the updated performance data
         webSocketController.broadcastPerformanceUpdate(performance);
-        
         return ResponseEntity.ok("Performance data recorded successfully");
     }
 

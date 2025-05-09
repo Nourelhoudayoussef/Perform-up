@@ -8,14 +8,16 @@ public class OrderReference {
     @Id
     private String id;
     private Integer orderRef;
-    private String productName;
+    private Integer productionTarget;
+    private String date;
     
     // Constructors
     public OrderReference() {}
     
-    public OrderReference(Integer orderRef, String productName) {
+    public OrderReference(Integer orderRef, Integer productionTarget, String date) {
         this.orderRef = orderRef;
-        this.productName = productName;
+        this.productionTarget = productionTarget;
+        this.date = date;
     }
     
     // Getters and Setters
@@ -35,11 +37,19 @@ public class OrderReference {
         this.orderRef = orderRef;
     }
     
-    public String getProductName() {
-        return productName;
+    public Integer getProductionTarget() {
+        return productionTarget;
     }
     
-    public void setProductName(String productName) {
-        this.productName = productName;
+    public void setProductionTarget(Integer productionTarget) {
+        this.productionTarget = productionTarget;
+    }
+    
+    public String getDate() {
+        return date;
+    }
+    
+    public void setDate(String date) {
+        this.date = date;
     }
 } 

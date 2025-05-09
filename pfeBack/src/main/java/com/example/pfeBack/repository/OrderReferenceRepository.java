@@ -6,4 +6,5 @@ import java.util.Optional;
 
 public interface OrderReferenceRepository extends MongoRepository<OrderReference, String> {
     Optional<OrderReference> findByOrderRef(Integer orderRef);
+    Optional<OrderReference> findByOrderRefAndDate(Integer orderRef, String date);
 } 
