@@ -9,6 +9,7 @@ import '../models/message.dart';
 import '../models/notification_model.dart';
 import 'dart:io' show Platform;
 import 'package:logger/logger.dart';
+import '../services/config_service.dart';
 
 class WebSocketService {
   static final WebSocketService _instance = WebSocketService._internal();
@@ -62,6 +63,9 @@ class WebSocketService {
     }
     
     try {
+      // Log current configuration
+      ConfigService.logConfiguration();
+      
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       final userId = prefs.getString('userId');
@@ -70,7 +74,9 @@ class WebSocketService {
         throw Exception('Token or userId not found in SharedPreferences');
       }
 
-      print('[WebSocketService] Connecting with token and userId');
+      print('[WebSocketService] Connecting to WebSocket URL: ${_webSocketUrl}');
+      print('[WebSocketService] With userId: $userId');
+      
       _stompClient = StompClient(
         config: StompConfig(
           url: _webSocketUrl,
@@ -86,6 +92,7 @@ class WebSocketService {
           webSocketConnectHeaders: {
             'Authorization': 'Bearer $token',
             'userId': userId,
+            'Sec-WebSocket-Protocol': 'v1.stock.stream, v1.chat.stream',
           },
           connectionTimeout: const Duration(seconds: 10),
           heartbeatIncoming: const Duration(seconds: 0),
@@ -94,23 +101,18 @@ class WebSocketService {
         ),
       );
 
+      print('[WebSocketService] Activating STOMP client...');
       _stompClient?.activate();
       _startPingTimer();
     } catch (e) {
       _logger.e('Error connecting to WebSocket: $e');
+      print('[WebSocketService] Connection error details: $e');
       rethrow;
     }
   }
   
   // Get appropriate WebSocket URL based on platform
-  String get _webSocketUrl {
-    if (Platform.isAndroid) {
-      return 'ws://10.0.2.2:8080/ws';
-    } else if (Platform.isIOS) {
-      return kIsWeb ? 'ws://localhost:8080/ws' : 'ws://localhost:8080/ws';
-    }
-    return 'ws://10.0.2.2:8080/ws';
-  }
+  String get _webSocketUrl => ConfigService.webSocketUrl;
   
   void _onConnect(StompFrame frame) {
     _logger.i('Connected to WebSocket server');
@@ -140,7 +142,8 @@ class WebSocketService {
   
   void _onWebSocketError(dynamic error) {
     _logger.e('WebSocket error: $error');
-    print('[WebSocketService] WebSocket error: $error');
+    print('[WebSocketService] WebSocket error details: $error');
+    print('[WebSocketService] Current WebSocket URL: $_webSocketUrl');
     _isConnected = false;
     _scheduleReconnect();
   }

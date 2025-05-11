@@ -35,14 +35,15 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _currentUserId;
   String? _currentUsername;
   StreamSubscription? _chatSubscription;
+  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
     print('[ChatScreen] initState called');
-    print('userId: "${widget.userId}"'); // Debug log
-    print('username: "${widget.username}"'); // Debug log
-    print('profilePicture: "${widget.profilePicture}"'); // Debug log
+    print('userId: "${widget.userId}"');
+    print('username: "${widget.username}"');
+    print('profilePicture: "${widget.profilePicture}"');
     _loadUserData();
     _initializeChat();
     
@@ -59,6 +60,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _isDisposed = true;
     _messageController.dispose();
     _scrollController.dispose();
     _chatSubscription?.cancel();
@@ -67,21 +69,29 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Subscribe to WebSocket messages
   void _subscribeToWebSocketMessages() {
+    _chatSubscription?.cancel(); // Cancel any existing subscription
+    
     _chatSubscription = _webSocketService.chatMessageStream.listen((message) {
+      if (_isDisposed) return; // Don't process messages if disposed
+      
       // Check if this message belongs to this chat conversation
       if (message.chatGroupId == generateChatGroupId(_currentUserId!, widget.userId)) {
-        setState(() {
-          // Add the message if it's not already in the list
-          if (!_messages.any((m) => m.id == message.id)) {
-            _messages.add(message);
-            _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-          }
-        });
-        
-        // Scroll to bottom after new message is received
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _scrollToBottom();
-        });
+        if (mounted) {
+          setState(() {
+            // Add the message if it's not already in the list
+            if (!_messages.any((m) => m.id == message.id)) {
+              _messages.add(message);
+              _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+            }
+          });
+          
+          // Scroll to bottom after new message is received
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _scrollToBottom();
+            }
+          });
+        }
       }
     });
   }
@@ -195,6 +205,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
+    if (_isDisposed) return;
     print('[ChatScreen] _sendMessage called');
     if (_messageController.text.trim().isEmpty) return;
     
@@ -211,14 +222,18 @@ class _ChatScreenState extends State<ChatScreen> {
       senderName: _currentUsername ?? 'Me',
     );
     
-    setState(() {
-      _messages.add(tempMessage);
-      _messageController.clear();
-    });
+    if (mounted) {
+      setState(() {
+        _messages.add(tempMessage);
+        _messageController.clear();
+      });
+    }
     
     // Scroll to bottom after message is added
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
+      if (mounted) {
+        _scrollToBottom();
+      }
     });
 
     try {
@@ -233,34 +248,38 @@ class _ChatScreenState extends State<ChatScreen> {
       await _webSocketService.sendChatMessage(widget.userId, content);
 
       // Replace the temporary message with the real one
-      setState(() {
-        final index = _messages.indexWhere((m) => 
-          m.id.startsWith('temp_') && 
-          m.content == content && 
-          m.senderId == _currentUserId);
-          
-        if (index != -1) {
-          _messages[index] = message;
-        }
-      });
+      if (mounted) {
+        setState(() {
+          final index = _messages.indexWhere((m) => 
+            m.id.startsWith('temp_') && 
+            m.content == content && 
+            m.senderId == _currentUserId);
+            
+          if (index != -1) {
+            _messages[index] = message;
+          }
+        });
+      }
     } catch (e) {
       print('Error sending message: $e');
       
-      // Remove the temporary message
-      setState(() {
-        _messages.removeWhere((m) => 
-          m.id.startsWith('temp_') && 
-          m.content == content && 
-          m.senderId == _currentUserId);
-      });
-      
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to send message: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        // Remove the temporary message
+        setState(() {
+          _messages.removeWhere((m) => 
+            m.id.startsWith('temp_') && 
+            m.content == content && 
+            m.senderId == _currentUserId);
+        });
+        
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send message: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 

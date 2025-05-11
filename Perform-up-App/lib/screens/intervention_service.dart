@@ -5,14 +5,16 @@ import 'dart:io' show Platform;
 
 class InterventionService {
   // Use the same dynamic base URL approach as ApiService
-  static String get baseUrl {
+  /*static String get baseUrl {
     if (Platform.isAndroid) {
       return 'http://10.0.2.2:8080';
     } else if (Platform.isIOS) {
       return 'http://localhost:8080';
     }
-    return 'http://10.0.2.2:8080'; // Fallback
-  }
+    return 'http://192.168.3.128:8080'; // Fallback
+  }*/
+
+  static String baseUrl = 'http://192.168.13.128:8080';
 
   // Get auth token from shared preferences
   Future<String?> _getToken() async {

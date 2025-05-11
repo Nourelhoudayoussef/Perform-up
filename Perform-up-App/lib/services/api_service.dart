@@ -20,14 +20,16 @@ extension MapStringDynamicExtension on Map<String, dynamic> {
 
 class ApiService {
   // Check if running on emulator or real device and use appropriate URL
-  static String get baseUrl {
+ /* static String get baseUrl {
     if (Platform.isAndroid) {
       return 'http://10.0.2.2:8080';
     } else if (Platform.isIOS) {
       return 'http://localhost:8080';
     }
-    return 'http://10.0.2.2:8080'; // Fallback
-  }
+    return 'http://192.168.137.125:8080'; // Fallback 
+  }*/
+
+  static String baseUrl = 'http://192.168.3.128:8080';
 
 
   static const Duration _minRequestInterval = Duration(milliseconds: 500);
@@ -351,11 +353,27 @@ class ApiService {
   // Generic GET request
   Future<dynamic> get(String endpoint) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/$endpoint'));
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      print('GET $endpoint with token: $token');
+      final response = await http.get(
+        Uri.parse('$baseUrl/$endpoint'),
+        headers: token != null
+            ? {
+                'Content-Type': 'application/json',
+                //'Accept': 'application/json',
+                'Authorization': 'Bearer $token',
+              }
+            : {
+                'Content-Type': 'application/json',
+                //'Accept': 'application/json',
+              },
+      );
       if (response.statusCode == 200) {
         return json.decode(response.body);
       } else {
-        throw Exception('Failed to load data');
+        print('GET $endpoint failed: ${response.statusCode} - ${response.body}');
+        throw Exception('Failed to load data: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
       throw Exception('Error: $e');
@@ -376,6 +394,7 @@ class ApiService {
       if (response.statusCode == 201 || response.statusCode == 200) {
         return json.decode(response.body);
       } else {
+        print('POST $endpoint failed: ${response.statusCode} - ${response.body}');
         throw Exception('Failed to post data');
       }
     } catch (e) {
@@ -1843,5 +1862,41 @@ class ApiService {
     // Return true on error to prevent logout loops
     return true;
   }
+}
+
+// Get daily performance by date
+Future<dynamic> getDailyPerformanceByDate(String date) async {
+  final response = await get('/supervisor/performance/$date');
+  return response.data;
+}
+
+// Get performance by workshop and chain (current day)
+Future<dynamic> getPerformanceByWorkshopAndChain(String workshop, String chain) async {
+  final response = await get('/supervisor/performance/workshop/$workshop/chain/$chain');
+  return response.data;
+}
+
+// Get performance by date and order reference
+Future<dynamic> getPerformanceByDateAndOrderRef(String date, String orderRef) async {
+  final response = await get('/supervisor/performance/$date/$orderRef');
+  return response.data;
+}
+
+// Get performance by date, workshop and chain
+Future<dynamic> getPerformanceByDateWorkshopChain(String date, String workshop, String chain) async {
+  final response = await get('/supervisor/performance/$date/workshop/$workshop/chain/$chain');
+  return response.data;
+}
+
+// Record performance data
+Future<dynamic> recordPerformanceData(Map<String, dynamic> data) async {
+  final response = await post('/supervisor/performance', data);
+  return response.data;
+}
+
+// Set daily target
+Future<dynamic> setDailyTarget(Map<String, dynamic> data) async {
+  final response = await post('/supervisor/target', data);
+  return response.data;
 }
 }

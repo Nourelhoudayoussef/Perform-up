@@ -16,6 +16,7 @@ import 'package:pfe/screens/reporting/reporting.dart';
 import 'package:pfe/services/websocket_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/technician/intervention_screen.dart';
+import 'screens/home_supervisor.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized(); 
@@ -64,13 +65,23 @@ class MyApp extends StatelessWidget {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
-            // Show InterventionScreen for technicians with currentIndex 0, ChatListScreen for others with currentIndex 1
-            return BaseLayout(
-              child: snapshot.data == UserRole.TECHNICIAN 
-                  ? const InterventionScreen() 
-                  : const ChatListScreen(),
-              currentIndex: snapshot.data == UserRole.TECHNICIAN ? 0 : 1,
-            );
+            // Route based on user role
+            if (snapshot.data == UserRole.TECHNICIAN) {
+              return BaseLayout(
+                child: const InterventionScreen(),
+                currentIndex: 0,
+              );
+            } else if (snapshot.data == UserRole.SUPERVISOR) {
+              return BaseLayout(
+                child: const HomeSupervisorScreen(),
+                currentIndex: 0,
+              );
+            } else {
+              return BaseLayout(
+                child: const ChatListScreen(),
+                currentIndex: 0,
+              );
+            }
           },
         ),
         '/profile': (context) => BaseLayout(child: EditProfileScreen(), currentIndex: 3),

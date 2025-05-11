@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/websocket_service.dart';
-import '../models/message.dart';
-import '../services/api_service.dart';
+import '../../services/websocket_service.dart';
+import '../../models/message.dart';
+import '../../services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ChatScreen extends StatefulWidget {

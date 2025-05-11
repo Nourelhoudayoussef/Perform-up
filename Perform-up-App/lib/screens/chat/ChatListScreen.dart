@@ -176,7 +176,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         backgroundColor: Color(0xFFD0ECE8),
         elevation: 4.0,
         shadowColor: Colors.black.withOpacity(0.25),
-        toolbarHeight: 100,
+        toolbarHeight: 60,
         leadingWidth: 56, // Default width of IconButton
         
         title: Padding(
@@ -184,7 +184,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
           child: Text(
             "Chats",
             style: GoogleFonts.poppins(
-                fontSize: 24,
+                fontSize: 20,
                 fontWeight: FontWeight.w500,
                 color: Color(0xC5000000)),
           ),
@@ -192,7 +192,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         actions: [
           Padding(
             padding: EdgeInsets.only(
-                right: 16.0), // Move the icon 16 pixels to the left
+                right: 0), // Move the icon 16 pixels to the left
             child: IconButton(
               icon: const Icon(FontAwesomeIcons.solidBell,
                   color: Color(0xC5000000)),

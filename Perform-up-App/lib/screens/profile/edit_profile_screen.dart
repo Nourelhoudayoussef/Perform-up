@@ -205,6 +205,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_userRole == null) {
+      return Center(child: CircularProgressIndicator());
+    }
+
     return Scaffold(
       backgroundColor: Color(0xFFF0F7F5),
       appBar: AppBar(
@@ -364,7 +368,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    _userRole!,
+                    _userRole ?? '',
                     style: GoogleFonts.poppins(
                       fontSize: 16,
                       color: Color(0x99000000),
@@ -410,6 +414,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   controller: _currentPasswordController,
                   obscureText: !_showCurrentPassword,
                   decoration: InputDecoration(
+                    hintText:"Current password",
                     filled: true,
                     fillColor: Color(0xFFF0F0F0),
                     border: OutlineInputBorder(
@@ -433,6 +438,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   controller: _newPasswordController,
                   obscureText: !_showNewPassword,
                   decoration: InputDecoration(
+                    hintText:"New password",
                     filled: true,
                     fillColor: Color(0xFFF0F0F0),
                     border: OutlineInputBorder(
@@ -464,6 +470,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   controller: _confirmPasswordController,
                   obscureText: !_showConfirmPassword,
                   decoration: InputDecoration(
+                    hintText:"Confirm new password",
                     filled: true,
                     fillColor: Color(0xFFF0F0F0),
                     border: OutlineInputBorder(
