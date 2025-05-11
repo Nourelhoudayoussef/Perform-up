@@ -86,15 +86,14 @@ public class ChatService {
                             m.getMachineReference(), m.getDate(), m.getDescription(), m.getTechnician_name(), m.getTimeSpent());
                 }
             }
-            // OrderReference: match all terms (productName, orderRef)
+            // OrderReference: match all terms (orderRef only)
             if (context == null) {
                 var orderMatches = orderReferenceRepository.findAll().stream()
-                    .filter(o -> (terms.productName == null || (o.getProductName() != null && o.getProductName().toLowerCase().contains(terms.productName)))
-                            && (terms.orderRef == null || (o.getOrderRef() != null && o.getOrderRef().toString().equals(terms.orderRef)))
+                    .filter(o -> (terms.orderRef == null || (o.getOrderRef() != null && o.getOrderRef().toString().equals(terms.orderRef)))
                     ).collect(Collectors.toList());
                 if (!orderMatches.isEmpty()) {
                     var o = orderMatches.get(0);
-                    context = String.format("OrderRef for product '%s' is %s.", o.getProductName(), o.getOrderRef());
+                    context = String.format("OrderRef: %s, Target: %s.", o.getOrderRef(), o.getProductionTarget());
                 }
             }
             // DefectType: match all terms (defectName)
@@ -173,15 +172,9 @@ public class ChatService {
                 }
             } else if (lowerQ.contains("order reference") || lowerQ.contains("orderref") || lowerQ.contains("order ref")) {
                 List<OrderReference> orders = orderReferenceRepository.findAll();
-                if (lowerQ.contains("product")) {
-                    context = "Order references (product name):\n" + orders.stream().limit(10).map(o ->
-                        String.format("- %s: %s", o.getOrderRef(), o.getProductName())
-                    ).collect(Collectors.joining("\n"));
-                } else {
-                    context = "Order references:\n" + orders.stream().limit(10).map(o ->
-                        String.format("- %s", o.getOrderRef())
-                    ).collect(Collectors.joining("\n"));
-                }
+                context = "Order references (orderRef, target):\n" + orders.stream().limit(10).map(o ->
+                    String.format("- %s: target %s", o.getOrderRef(), o.getProductionTarget())
+                ).collect(Collectors.joining("\n"));
             } else if (lowerQ.contains("performance") || lowerQ.contains("produced") || lowerQ.contains("target")) {
                 List<Performance> perf = performanceRepository.findAll();
                 if (lowerQ.contains("defect")) {
@@ -265,13 +258,12 @@ public class ChatService {
         String workshop;
         String chain;
         String orderRef;
-        String productName;
         String machineReference;
         String technician;
         String defectName;
         String month;
         boolean hasAny() {
-            return date != null || workshop != null || chain != null || orderRef != null || productName != null || machineReference != null || technician != null || defectName != null || month != null;
+            return date != null || workshop != null || chain != null || orderRef != null || machineReference != null || technician != null || defectName != null || month != null;
         }
     }
 
@@ -296,10 +288,6 @@ public class ChatService {
         Pattern orPat = Pattern.compile("orderRef\\s*(\\d+)", Pattern.CASE_INSENSITIVE);
         Matcher orM = orPat.matcher(question);
         if (orM.find()) terms.orderRef = orM.group(1);
-        // Product name (quoted or after 'for')
-        Pattern prodPat = Pattern.compile("for\\s+([a-zA-Z0-9 ]+)", Pattern.CASE_INSENSITIVE);
-        Matcher prodM = prodPat.matcher(question);
-        if (prodM.find()) terms.productName = prodM.group(1).trim().toLowerCase();
         // Machine reference (W1-C2-M3 style)
         Pattern machPat = Pattern.compile("(w\\d+-c\\d+-m\\d+)", Pattern.CASE_INSENSITIVE);
         Matcher machM = machPat.matcher(question);
