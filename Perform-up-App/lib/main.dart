@@ -16,7 +16,8 @@ import 'package:pfe/screens/reporting/reporting.dart';
 import 'package:pfe/services/websocket_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/technician/intervention_screen.dart';
-import 'screens/home_supervisor.dart';
+import 'screens/supervisor/home_supervisor.dart';
+import 'screens/chatbot/chatbot_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized(); 
@@ -127,6 +128,7 @@ class MyApp extends StatelessWidget {
         '/interventions': (context) => const InterventionScreen(),
         '/reporting': (context) => BaseLayout(child: ReportingScreen(), currentIndex:2),
         '/chatlist': (context) => BaseLayout(child: ChatListScreen(), currentIndex: 1),
+        '/chatbot': (context) => const ChatbotScreen(),
       },
     );
   }

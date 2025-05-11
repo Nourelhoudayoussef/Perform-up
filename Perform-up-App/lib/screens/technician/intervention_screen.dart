@@ -476,7 +476,14 @@ class _InterventionScreenState extends State<InterventionScreen> {
                 ],
               ),
             ),
-      
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => Navigator.pushNamed(context, '/chatbot'),
+        icon: const Icon(Icons.smart_toy),
+        label: const Text('AI Help'),
+        backgroundColor: const Color(0xFF6BBFB5),
+        elevation: 4,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
     );
   }
 

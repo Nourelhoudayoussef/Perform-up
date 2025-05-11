@@ -44,7 +44,7 @@ public class SupervisorController {
     
     @Autowired
     private UserRepository userRepository;
-
+    
     // Set target by date and orderRef
     @PostMapping("/target")
     @PreAuthorize("hasRole('SUPERVISOR')")
@@ -113,16 +113,16 @@ public class SupervisorController {
             }
         }
         Performance performance = new Performance(
-            supervisor.getId(),
+                supervisor.getId(),
             today,
-            performanceDTO.getHour(),
+                performanceDTO.getHour(),
             workshopStr,
             chainStr,
-            performanceDTO.getProduced(),
-            defects,
+                performanceDTO.getProduced(),
+                defects,
             0, // productionTarget defaulted to 0
-            performanceDTO.getOrderRef()
-        );
+                performanceDTO.getOrderRef()
+            );
         performanceRepository.save(performance);
         webSocketController.broadcastPerformanceUpdate(performance);
         return ResponseEntity.ok("Performance data recorded successfully");
