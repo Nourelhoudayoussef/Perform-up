@@ -3,8 +3,8 @@ import 'package:flutter/foundation.dart';
 
 class ConfigService {
   // Development URLs
-  static const String _devBaseUrl = 'http://192.168.3.128:8080';
-  static const String _devWebSocketUrl = 'ws://192.168.3.128:8080/ws';
+  static const String _devBaseUrl = 'http://10.0.2.2:8080';
+  static const String _devWebSocketUrl = 'ws://10.0.2.2:8080/ws';
   
   // Staging URLs
   static const String _stagingBaseUrl = 'https://staging-api.performup.com';
@@ -18,7 +18,7 @@ class ConfigService {
     if (kDebugMode) {
       // Development environment
       if (Platform.isAndroid) {
-        return 'http://192.168.3.128:8080';//emulator
+        return 'http://10.0.2.2:8080';//emulator
       } else if (Platform.isIOS) {
         return 'http://localhost:8080';
       }
@@ -34,15 +34,15 @@ class ConfigService {
     if (kDebugMode) {
       // Development environment
       if (Platform.isAndroid) {
-        return 'ws://192.168.3.128:8080/ws/websocket';  // Added /websocket for STOMP
+        return 'ws://10.0.2.2:8080/ws';  // Removed /websocket suffix which is causing issues
       } else if (Platform.isIOS) {
-        return 'ws://localhost:8080/ws/websocket';
+        return 'ws://localhost:8080/ws';
       }
-      return _devWebSocketUrl + '/websocket';
+      return _devWebSocketUrl;
     } else if (kProfileMode) {
-      return _stagingWebSocketUrl + '/websocket';
+      return _stagingWebSocketUrl;
     } else {
-      return _prodWebSocketUrl + '/websocket';
+      return _prodWebSocketUrl;
     }
   }
 

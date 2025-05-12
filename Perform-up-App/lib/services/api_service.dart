@@ -20,16 +20,16 @@ extension MapStringDynamicExtension on Map<String, dynamic> {
 
 class ApiService {
   // Check if running on emulator or real device and use appropriate URL
- /* static String get baseUrl {
+  static String get baseUrl {
     if (Platform.isAndroid) {
       return 'http://10.0.2.2:8080';
     } else if (Platform.isIOS) {
       return 'http://localhost:8080';
     }
     return 'http://192.168.137.125:8080'; // Fallback 
-  }*/
+  }
 
-  static String baseUrl = 'http://192.168.3.128:8080';
+  //static String baseUrl = 'http://192.168.3.128:8080';
 
 
   static const Duration _minRequestInterval = Duration(milliseconds: 500);

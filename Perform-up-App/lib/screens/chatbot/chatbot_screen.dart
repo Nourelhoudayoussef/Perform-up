@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../services/chatbot_service.dart';
 
 class ChatbotScreen extends StatefulWidget {
   const ChatbotScreen({Key? key}) : super(key: key);
@@ -12,6 +13,25 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
+  final ChatbotService _chatbotService = ChatbotService();
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _addWelcomeMessage();
+  }
+
+  void _addWelcomeMessage() {
+    setState(() {
+      _messages.add(
+        const ChatMessage(
+          text: "Hello! I'm your factory assistant. Ask me about production data, efficiency metrics, or any other information about your factory operations.",
+          isUser: false,
+        ),
+      );
+    });
+  }
 
   @override
   void dispose() {
@@ -20,7 +40,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     super.dispose();
   }
 
-  void _handleSubmitted(String text) {
+  void _handleSubmitted(String text) async {
     if (text.trim().isEmpty) return;
 
     _messageController.clear();
@@ -31,23 +51,50 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           isUser: true,
         ),
       );
-      // TODO: Add API integration here
-      // For now, add a dummy response
-      _messages.add(
-        const ChatMessage(
-          text: "I'm here to help you with your questions about production and performance. How can I assist you today?",
-          isUser: false,
-        ),
-      );
+      _isLoading = true;
     });
 
     // Scroll to bottom
+    _scrollToBottom();
+
+    try {
+      // Call the chatbot service
+      final response = await _chatbotService.sendMessage(text);
+      
+      setState(() {
+        _messages.add(
+          ChatMessage(
+            text: response,
+            isUser: false,
+          ),
+        );
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _messages.add(
+          ChatMessage(
+            text: "Sorry, I couldn't process your request. Please try again later.",
+            isUser: false,
+          ),
+        );
+        _isLoading = false;
+      });
+    }
+
+    // Scroll to bottom again after adding response
+    _scrollToBottom();
+  }
+
+  void _scrollToBottom() {
     Future.delayed(const Duration(milliseconds: 100), () {
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
     });
   }
 
@@ -83,6 +130,33 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
               },
             ),
           ),
+          if (_isLoading)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6BBFB5).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.smart_toy,
+                      color: Color(0xFF6BBFB5),
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text("Thinking...", 
+                    style: TextStyle(
+                      color: Color(0xFF6BBFB5),
+                      fontWeight: FontWeight.w500,
+                    )
+                  ),
+                ],
+              ),
+            ),
           Container(
             decoration: BoxDecoration(
               color: Colors.white,

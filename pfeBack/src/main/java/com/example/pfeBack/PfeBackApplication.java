@@ -10,6 +10,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
 import com.example.pfeBack.repository.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -18,13 +19,18 @@ import java.util.Optional;
 import java.util.Scanner;
 
 @SpringBootApplication
-@ComponentScan(basePackages = {"com.example.pfeBack"})
+@ComponentScan(basePackages = {"com.example.pfeBack", "com.pfeBack"})
 @EnableMongoRepositories(basePackages = {"com.example.pfeBack.repository"})
 @EntityScan(basePackages = {"com.example.pfeBack.model"})
 public class PfeBackApplication {
 
 	public static void main(String[] args) {
 		SpringApplication.run(PfeBackApplication.class, args);
+	}
+	
+	@Bean
+	public RestTemplate restTemplate() {
+		return new RestTemplate();
 	}
 	
 	@Bean
