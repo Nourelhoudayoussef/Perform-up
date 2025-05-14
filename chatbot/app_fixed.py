@@ -9,6 +9,7 @@ from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 import numpy as np
 import time  # Add this import for sleep functionality
+from predict_intent import IntentPredictor  # Import our new intent predictor
 
 # Download required NLTK data - only what we actually need
 try:
@@ -58,6 +59,9 @@ def connect_to_mongodb(max_retries=5, retry_delay=5):
 # Try to connect with retries
 client, db, mongodb_available, available_collections = connect_to_mongodb()
 
+# Initialize the intent predictor
+intent_predictor = IntentPredictor()
+
 def preprocess_text(text):
     """Preprocess text with graceful fallback if POS tagging fails"""
     tokens = word_tokenize(text.lower())
@@ -72,6 +76,8 @@ def preprocess_text(text):
 def extract_date_info(text):
     """Extract and normalize date information from text"""
     today = datetime.now()
+    
+    print(f"Extracting date info from: '{text}'")
     
     # Extract explicit dates (YYYY-MM-DD)
     date_match = re.search(r'\b(\d{4}-\d{2}-\d{2})\b', text)
@@ -122,41 +128,71 @@ def extract_date_info(text):
             'description': 'last month'
         }
     
-    # Handle month names (January, February, etc.)
-    month_pattern = r'(january|february|march|april|may|june|july|august|september|october|november|december)'
-    month_match = re.search(month_pattern, text.lower())
-    if month_match:
-        month_name = month_match.group(1)
-        month_num = {
-            'january': 1, 'february': 2, 'march': 3, 'april': 4,
-            'may': 5, 'june': 6, 'july': 7, 'august': 8,
-            'september': 9, 'october': 10, 'november': 11, 'december': 12
-        }[month_name]
-        
-        # Check if year is specified
-        year_match = re.search(r'\b(20\d{2})\b', text)
-        year = int(year_match.group(1)) if year_match else today.year
-        
-        # If the month is in the future and no year specified, assume last year
-        if month_num > today.month and not year_match:
-            year = today.year - 1
-            
-        # Create date range for the entire month
-        first_day = datetime(year, month_num, 1)
-        if month_num == 12:
-            last_day = datetime(year + 1, 1, 1) - timedelta(days=1)
-        else:
-            last_day = datetime(year, month_num + 1, 1) - timedelta(days=1)
-            
-        return {
-            'type': 'relative_date',
-            'value': {
-                'start': first_day.strftime('%Y-%m-%d'),
-                'end': last_day.strftime('%Y-%m-%d')
-            },
-            'description': month_name
-        }
+    # Simple month name pattern with case-insensitivity (more permissive)
+    month_names = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 
+                  'august', 'september', 'october', 'november', 'december']
     
+    # First check for month with year (e.g., "May 2025")
+    for i, month_name in enumerate(month_names, 1):
+        # More permissive pattern: month name followed by optional spaces and a 4-digit year
+        month_year_pattern = rf'\b{month_name}\s*(\d{{4}})\b'
+        match = re.search(month_year_pattern, text.lower())
+        
+        if match:
+            print(f"Found month with year: {month_name} {match.group(1)}")
+            year = int(match.group(1))
+            month_num = i
+            
+            # Create date range for the entire month
+            first_day = datetime(year, month_num, 1)
+            
+            # Calculate the last day of the month
+            if month_num == 12:
+                last_day = datetime(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                last_day = datetime(year, month_num + 1, 1) - timedelta(days=1)
+            
+            return {
+                'type': 'relative_date',
+                'value': {
+                    'start': first_day.strftime('%Y-%m-%d'),
+                    'end': last_day.strftime('%Y-%m-%d')
+                },
+                'description': f'{month_name} {year}'
+            }
+    
+    # Then check for just month name without year
+    for i, month_name in enumerate(month_names, 1):
+        if f" {month_name} " in f" {text.lower()} ":
+            print(f"Found month without year: {month_name}")
+            month_num = i
+            
+            # Decide which year to use
+            year = today.year
+            if month_num > today.month:
+                # If the specified month is in the future, assume previous year
+                year = today.year - 1
+            
+            # Create date range for the entire month
+            first_day = datetime(year, month_num, 1)
+            
+            # Calculate the last day of the month
+            if month_num == 12:
+                last_day = datetime(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                last_day = datetime(year, month_num + 1, 1) - timedelta(days=1)
+            
+            return {
+                'type': 'relative_date',
+                'value': {
+                    'start': first_day.strftime('%Y-%m-%d'),
+                    'end': last_day.strftime('%Y-%m-%d')
+                },
+                'description': f'{month_name} {year}'
+            }
+    
+    # No date info found
+    print("No date information found in the text")
     return None
 
 def extract_math_operation(text):
@@ -205,6 +241,81 @@ def extract_math_operation(text):
     
     return operations[0] if operations else None
 
+def predict_intent(text):
+    """Predict the intent using the PyTorch model"""
+    try:
+        prediction = intent_predictor.predict(text)
+        intent = prediction['intent']
+        confidence = prediction['confidence']
+        
+        print(f"Intent prediction: {intent}, Confidence: {confidence:.4f}")
+        
+        # Map the predicted intent to our internal metrics
+        intent_to_metrics = {
+            'performance': ['production', 'efficiency'],
+            'defects': ['defects'],
+            'failures': ['failures'],
+            'orders': ['order']
+        }
+        
+        # Expand mappings for improved intent detection
+        intent_context_clues = {
+            'performance': ['production', 'efficiency', 'output', 'produced', 'productivity', 'performance', 'rate'],
+            'defects': ['defect', 'quality', 'issue', 'problem', 'loose thread', 'mistake', 'error'],
+            'failures': ['failure', 'machine', 'breakdown', 'maintenance', 'intervention', 'repair', 'malfunction'],
+            'orders': ['order', 'delivery', 'shipment', 'customer', 'client']
+        }
+        
+        # If confidence is too low or intent is unknown, try to detect intent from keywords
+        if intent == 'unknown' or confidence < 0.4:
+            print("Low confidence prediction, checking for context clues")
+            text_lower = text.lower()
+            
+            best_match = None
+            max_matches = 0
+            
+            for intent_type, clues in intent_context_clues.items():
+                matches = sum(1 for clue in clues if clue in text_lower)
+                if matches > max_matches:
+                    max_matches = matches
+                    best_match = intent_type
+            
+            if max_matches > 0 and best_match:
+                print(f"Detected intent {best_match} from context clues with {max_matches} matches")
+                return intent_to_metrics.get(best_match, None)
+            
+            return None
+            
+        return intent_to_metrics.get(intent, None)
+    except Exception as e:
+        print(f"Error predicting intent: {e}")
+        # Fall back to keyword-based intent detection in case of model error
+        try:
+            text_lower = text.lower()
+            
+            # Map keywords to intent metrics
+            keyword_metrics = {
+                'defects': ['defect', 'quality', 'loose thread'],
+                'production': ['production', 'output', 'produce', 'productivity'],
+                'efficiency': ['efficiency', 'performance'],
+                'failures': ['machine', 'failure', 'breakdown', 'maintenance'],
+                'order': ['order', 'delivery', 'shipment']
+            }
+            
+            detected_metrics = set()
+            for metric, keywords in keyword_metrics.items():
+                if any(keyword in text_lower for keyword in keywords):
+                    detected_metrics.add(metric)
+            
+            if detected_metrics:
+                print(f"Fallback detected metrics: {detected_metrics}")
+                return list(detected_metrics)
+                
+            return None
+        except Exception as fallback_error:
+            print(f"Error in fallback intent detection: {fallback_error}")
+            return None
+
 def analyze_question(text):
     """Analyze the question using NLP to understand intent and extract relevant information"""
     try:
@@ -221,30 +332,67 @@ def analyze_question(text):
         'aggregation': None,
         'comparison': None,
         'math_operation': None,
-        'calculation_type': None
+        'calculation_type': None,
+        'original_text': text  # Store the original text for better question analysis
     }
     
-    # Detect intent for machine failures specifically
-    failure_patterns = [
-        r'(machine|equipment)\s+(failures?|breakdowns?|issues?|problems?)',
-        r'(failures?|breakdowns?)\s+of\s+(machines?|equipment)',
-        r'(show|display|get|list|find)\s+.*\s+(machine|equipment)\s+(failures?|breakdowns?)',
-        r'(distribution|spread|statistics)\s+of\s+(machine|equipment)\s+(failures?|breakdowns?)'
-    ]
+    # Debug date extraction
+    print(f"Date extraction results: {analysis['date_info']}")
     
-    for pattern in failure_patterns:
-        if re.search(pattern, text, re.IGNORECASE):
-            analysis['metrics'].add('failures')
-            print("Detected machine failure query intent")
+    # First try to predict intent using the PyTorch model
+    predicted_metrics = predict_intent(text)
+    if predicted_metrics:
+        analysis['metrics'].update(predicted_metrics)
+        print(f"Setting metrics based on predicted intent: {predicted_metrics}")
+    
+    # Extract mathematical operation if we have a metrics-based question
+    if analysis['metrics'] and not analysis['math_operation']:
+        math_op = extract_math_operation(text)
+        if math_op:
+            analysis['math_operation'] = math_op
+            print(f"Setting math operation: {math_op}")
+    
+    # If we're analyzing a known defect question, extract specialized information
+    if 'defects' in analysis['metrics']:
+        # Check for chain defect comparison patterns
+        if re.search(r'which\s+chain|chain\s+with|chain\s+has', text, re.IGNORECASE) and re.search(r'most|highest|maximum|worst', text, re.IGNORECASE):
+            analysis['calculation_type'] = 'chain_defects'
+            analysis['comparison'] = 'highest'
+            print("Detected chain defect comparison query")
+        
+        # For defect count queries
+        if re.search(r'how\s+many|count|number\s+of|total', text, re.IGNORECASE) and not analysis['math_operation']:
+            analysis['math_operation'] = 'sum'
+            print("Setting math operation to sum for defect count")
+        
+        # For defect rate queries
+        if re.search(r'rate|ratio|percentage|proportion', text, re.IGNORECASE):
+            analysis['calculation_type'] = 'defect_rate'
+            analysis['math_operation'] = 'rate'
+            analysis['metrics'].add('production')  # Need production for rate calculation
+            print("Set calculation type to defect_rate")
+        
+        # For workshop-specific defect queries
+        workshop_match = re.search(r'workshop\s+(\d+|one|two|three|four|five)', text, re.IGNORECASE)
+        if workshop_match:
+            workshop_num = workshop_match.group(1).lower()
+            # Convert word numbers to digits if necessary
+            word_to_digit = {'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5'}
+            if workshop_num in word_to_digit:
+                workshop_num = word_to_digit[workshop_num]
             
-            # Check if this is a distribution/statistics query
-            if re.search(r'distribution|spread|statistics', text, re.IGNORECASE):
-                analysis['math_operation'] = 'distribution'
-                print("Setting math operation to distribution for failure statistics")
-                
-            break
+            # Add workshop filter
+            analysis['filters']['workshop'] = workshop_num
+            print(f"Added workshop filter: {workshop_num} for workshop-specific query")
     
-    # Detect compare/comparison operations
+    # Similarly for failures questions
+    if 'failures' in analysis['metrics']:
+        # Distribution statistics 
+        if re.search(r'distribution|spread|statistics', text, re.IGNORECASE):
+            analysis['math_operation'] = 'distribution'
+            print("Setting math operation to distribution for failure statistics")
+    
+    # Handle comparison questions
     compare_match = re.search(r'compare\s+(\w+)\s+between\s+(\w+)\s+(\d+)\s+and\s+(\d+)', text, re.IGNORECASE)
     if compare_match:
         metric_type = compare_match.group(1)
@@ -274,238 +422,6 @@ def analyze_question(text):
             analysis['metrics'].update(['production', 'defects'])
         
         print(f"Detected comparison: {analysis['comparison']}")
-    else:
-        # Check for simpler comparison pattern
-        simple_compare = re.search(r'compare\s+(\w+)\s+(\d+)\s+and\s+(\d+)', text, re.IGNORECASE)
-        if simple_compare:
-            entity_type = simple_compare.group(1)
-            id1 = simple_compare.group(2)
-            id2 = simple_compare.group(3)
-            
-            # Set comparison type
-            analysis['calculation_type'] = 'comparison'
-            analysis['comparison'] = {
-                'entity_type': entity_type,
-                'ids': [id1, id2]
-            }
-            
-            # Add default metrics
-            analysis['metrics'].update(['production', 'defects', 'efficiency'])
-            
-            print(f"Detected simple comparison: {analysis['comparison']}")
-    
-    # If no specific comparison pattern found, check for generic comparison words
-    if analysis['comparison'] is None and not analysis['calculation_type']:
-        workshop_compare = re.search(r'(compare|comparison)\s+.*?(workshop|work shop|shops?)\s+(\d+)\s+and\s+(\d+)', text, re.IGNORECASE)
-        if workshop_compare:
-            id1 = workshop_compare.group(3)
-            id2 = workshop_compare.group(4)
-            
-            analysis['calculation_type'] = 'comparison'
-            analysis['comparison'] = {
-                'entity_type': 'workshop',
-                'ids': [id1, id2]
-            }
-            
-            # Add default metrics for workshop comparison
-            analysis['metrics'].update(['production', 'defects', 'efficiency'])
-            
-            print(f"Detected workshop comparison: {analysis['comparison']}")
-    
-    # Detect special metrics like defect rate with averages
-    defect_rate_patterns = [
-        r'(average|mean|avg).*?defect\s+rate',
-        r'defect\s+rate.*?(average|mean|avg)',
-        r'(calculate|compute|what\s+is)\s+(?:the\s+)?(average|mean|avg).*?defect\s+rate'
-    ]
-    
-    for pattern in defect_rate_patterns:
-        if re.search(pattern, text, re.IGNORECASE):
-            analysis['metrics'].add('defects')
-            analysis['metrics'].add('production')
-            analysis['calculation_type'] = 'defect_rate'
-            analysis['math_operation'] = 'average'
-            print("Detected average defect rate calculation")
-            break
-            
-    # Fix for the defect rate check - properly handling the calculation_type field
-    calc_type = analysis.get('calculation_type')
-    has_defect_rate_calculation_type = (calc_type is not None and 'defect_rate' in calc_type)
-    
-    # Regular defect rate without average
-    if not has_defect_rate_calculation_type and re.search(r'defect\s+rate', text, re.IGNORECASE):
-        analysis['metrics'].add('defects')
-        analysis['metrics'].add('production')
-        analysis['calculation_type'] = 'defect_rate'
-        
-        # Check for highest/lowest
-        if re.search(r'highest|max|maximum|worst', text, re.IGNORECASE):
-            # Initialize comparison field if it's still None
-            if analysis['comparison'] is None:
-                analysis['comparison'] = 'highest'
-            # Otherwise it could be a dictionary from previous processing
-            elif isinstance(analysis['comparison'], str):
-                analysis['comparison'] = 'highest'
-        elif re.search(r'lowest|min|minimum|best', text, re.IGNORECASE):
-            # Initialize comparison field if it's still None
-            if analysis['comparison'] is None:
-                analysis['comparison'] = 'lowest'
-            # Otherwise it could be a dictionary from previous processing
-            elif isinstance(analysis['comparison'], str):
-                analysis['comparison'] = 'lowest'
-            
-        print(f"Detected defect rate calculation with comparison: {analysis['comparison']}")
-    
-    # Handle "past week" or time-based filters
-    if re.search(r'past\s+week', text, re.IGNORECASE):
-        # Calculate date range for past week
-        today = datetime.now()
-        one_week_ago = today - timedelta(days=7)
-        analysis['date_info'] = {
-            'type': 'relative_date',
-            'value': {
-                'start': one_week_ago.strftime('%Y-%m-%d'),
-                'end': today.strftime('%Y-%m-%d')
-            }
-        }
-        print(f"Set date range for past week: {analysis['date_info']}")
-    
-    # Better detection of efficiency rate calculations
-    efficiency_rate_patterns = [
-        r'(?:efficiency|performance)\s+rate\s+per\s+(hour|day|week|month)',
-        r'(?:calculate|compute|what\s+is)\s+(?:the\s+)?(?:efficiency|performance)\s+(?:rate\s+)?per\s+(hour|day|week|month)',
-        r'(?:hourly|daily|weekly|monthly)\s+(?:efficiency|performance)\s+rate',
-        r'(?:production|output)\s+rate\s+per\s+(hour|day|week|month)'
-    ]
-    
-    for pattern in efficiency_rate_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            # Extract the time period if available in the pattern
-            time_group = match.groups()
-            if time_group and time_group[0]:
-                period = time_group[0].lower()
-            # Otherwise detect from other patterns
-            elif 'hourly' in text.lower() or 'per hour' in text.lower():
-                period = 'hour'
-            elif 'daily' in text.lower() or 'per day' in text.lower():
-                period = 'day'
-            elif 'weekly' in text.lower() or 'per week' in text.lower():
-                period = 'week'
-            elif 'monthly' in text.lower() or 'per month' in text.lower():
-                period = 'month'
-            else:
-                period = 'hour'  # Default to hour
-                
-            analysis['metrics'].add('efficiency')
-            analysis['calculation_type'] = 'efficiency_rate'
-            analysis['time_period'] = period
-            analysis['math_operation'] = 'rate'
-            print(f"Detected efficiency rate calculation per {period}")
-            break
-    
-    # Determine if this is a calculation query
-    calculation_keywords = ['calculate', 'compute', 'sum', 'average', 'mean', 'percentage', 
-                           'percent', 'trend', 'rate', 'distribution', 'statistics', 
-                           'efficiency', 'performance']
-    
-    if any(keyword in text.lower() for keyword in calculation_keywords) and not analysis['calculation_type']:
-        analysis['math_operation'] = extract_math_operation(text)
-        
-        # If we detect a rate calculation for efficiency
-        if analysis['math_operation'] == 'rate' and 'efficiency' in text.lower():
-            # Add efficiency to metrics
-            analysis['metrics'].add('efficiency')
-            
-            # Extract time period
-            time_period = 'hour'  # default
-            if re.search(r'per day|daily', text, re.IGNORECASE):
-                time_period = 'day'
-            elif re.search(r'per week|weekly', text, re.IGNORECASE):
-                time_period = 'week'
-            elif re.search(r'per month|monthly', text, re.IGNORECASE):
-                time_period = 'month'
-                
-            analysis['time_period'] = time_period
-            analysis['calculation_type'] = 'efficiency_rate'
-            print(f"Detected efficiency rate calculation per {time_period}")
-    
-    # Extract metrics using generic patterns
-    metric_patterns = {
-        'production': r'production|output|produced|units|quantity',
-        'defects': r'defects?|errors?|quality issues?',
-        'efficiency': r'efficiency|performance|productivity',
-        'failures': r'failures?|breakdowns?|maintenance|repairs?',
-        'target': r'target|goal|objective',
-        'variance': r'variance|deviation|difference'
-    }
-    
-    # Check for general keywords related to each metric
-    for metric, pattern in metric_patterns.items():
-        if re.search(pattern, text, re.IGNORECASE):
-            analysis['metrics'].add(metric)
-    
-    # Extract filters using generic patterns
-    filter_patterns = {
-        'workshop': r'workshop\s*(\d+)',
-        'machine': r'machine\s+(?:id|reference|ref|number)?\s*([a-zA-Z0-9\-]+)',  # More specific machine pattern
-        'technician': r'(?:technician|handled by|fixed by|repaired by)\s+([^\s,.?!][^,.?!]*)',
-        'order': r'order\s*(?:reference|ref)?\s*#?\s*(\d+)',
-        'chain': r'chain\s*([a-zA-Z0-9\-]+)'
-    }
-    
-    # Check for workshop mentions in comparison contexts
-    if isinstance(analysis['comparison'], dict) and analysis['comparison'].get('entity_type') == 'workshop':
-        workshop_ids = analysis['comparison'].get('ids', [])
-        if workshop_ids:
-            # Don't add as a filter, as we need both workshops for comparison
-            print(f"Found workshop IDs for comparison: {workshop_ids}")
-            
-    # Extract all filters except machine if it's a general machine failures query
-    for filter_type, pattern in filter_patterns.items():
-        # Skip machine filter for general machine failures query
-        if filter_type == 'machine' and 'failures' in analysis['metrics'] and not re.search(r'for machine|by machine|specific machine', text, re.IGNORECASE):
-            print("Query is about general machine failures, not filtering by specific machine")
-            continue
-            
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            # Clean up the matched value
-            value = match.group(1).strip()
-            # Remove common words and keep only the relevant part
-            value = re.sub(r'\b(handled|by|fixed|repaired)\b', '', value, flags=re.IGNORECASE).strip()
-            
-            # Special handling for technician
-            if filter_type == 'technician':
-                # Just extract the name without the word "technician"
-                if "technician" in value.lower():
-                    value = re.sub(r'technician\s*', '', value, flags=re.IGNORECASE).strip()
-                print(f"Extracted technician filter: '{value}'")
-                # Add to filters
-                analysis['filters'][filter_type] = value
-                print(f"Added technician filter to analysis: {analysis['filters']}")
-            # Special handling for order
-            elif filter_type == 'order':
-                print(f"Extracted order reference: '{value}'")
-                analysis['filters'][filter_type] = value
-            else:
-                analysis['filters'][filter_type] = value
-    
-    # Special handling for last month
-    if re.search(r'\blast\s+month\b', text, re.IGNORECASE) and not analysis['date_info']:
-        today = datetime.now()
-        # Calculate first and last day of previous month
-        first_day = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
-        last_day = today.replace(day=1) - timedelta(days=1)
-        
-        analysis['date_info'] = {
-            'type': 'relative_date',
-            'value': {
-                'start': first_day.strftime('%Y-%m-%d'),
-                'end': last_day.strftime('%Y-%m-%d')
-            }
-        }
-        print(f"Set date range for last month: {analysis['date_info']}")
     
     return analysis
 
@@ -517,8 +433,110 @@ def perform_calculation(data, analysis):
     results = {}
     
     try:
+        # Special handling for chain defect comparison
+        if analysis.get('calculation_type') == 'chain_defects':
+            print("Calculating defects by chain")
+            
+            # Group defects by chain
+            chain_defects = {}
+            chain_production = {}
+            
+            # Try various possible field names for chain
+            chain_fields = ['chain', 'chainId', 'chain_id', 'productChain', 'product_chain', 'chainName', 'chain_name']
+            
+            # Check if any of our records have chain fields
+            has_chain_fields = False
+            sample_record = data[0] if data else {}
+            for field in chain_fields:
+                if field in sample_record and sample_record[field]:
+                    has_chain_fields = True
+                    print(f"Found chain field: {field} with value: {sample_record[field]}")
+                    break
+            
+            # If no chain fields found, try to use another field as proxy or group everything
+            if not has_chain_fields:
+                # Look for alternative grouping fields
+                proxy_fields = ['line', 'product', 'productType', 'product_type', 'productLine', 'product_line']
+                proxy_field = None
+                
+                for field in proxy_fields:
+                    if any(field in record and record[field] for record in data[:10]):
+                        proxy_field = field
+                        print(f"Using {proxy_field} as proxy for chain grouping")
+                        break
+                
+                if not proxy_field:
+                    # If no proxy field found, check if we can use workshop as grouping
+                    if any('workshop' in record and record['workshop'] for record in data[:10]):
+                        proxy_field = 'workshop'
+                        print("Using workshop as proxy for chain grouping")
+            
+            for record in data:
+                # Find chain identifier
+                chain_id = None
+                
+                # Try to get chain ID from direct chain fields
+                for field in chain_fields:
+                    if field in record and record[field]:
+                        chain_id = str(record[field])
+                        break
+                
+                # If no chain field found, use proxy field if available
+                if not chain_id and not has_chain_fields:
+                    if proxy_field and proxy_field in record and record[proxy_field]:
+                        chain_id = f"{proxy_field.capitalize()}-{record[proxy_field]}"
+                    elif 'workshop' in record and record['workshop']:
+                        chain_id = f"Workshop-{record['workshop']}"
+                    else:
+                        chain_id = "Unknown Chain"
+                
+                # If still no chain ID, use Unknown
+                if not chain_id:
+                    chain_id = "Unknown Chain"
+                
+                # Get defects and production values
+                defects = float(record.get('defects', 0))
+                production = float(record.get('produced', 0))
+                
+                # Add to totals
+                if chain_id not in chain_defects:
+                    chain_defects[chain_id] = 0
+                    chain_production[chain_id] = 0
+                
+                chain_defects[chain_id] += defects
+                chain_production[chain_id] += production
+            
+            # Print debug info
+            print(f"Found {len(chain_defects)} chains: {list(chain_defects.keys())}")
+            
+            # Calculate defect rates and create result list
+            chain_stats = []
+            for chain_id in chain_defects:
+                defect_rate = 0
+                if chain_production[chain_id] > 0:
+                    defect_rate = (chain_defects[chain_id] / chain_production[chain_id]) * 100
+                
+                chain_stats.append({
+                    'chain': chain_id,
+                    'defects': chain_defects[chain_id],
+                    'production': chain_production[chain_id],
+                    'defect_rate': defect_rate
+                })
+            
+            # Sort by defect count or rate based on comparison type
+            if analysis.get('comparison') == 'highest':
+                chain_stats.sort(key=lambda x: x['defects'], reverse=True)
+            elif analysis.get('comparison') == 'lowest':
+                chain_stats.sort(key=lambda x: x['defects'])
+            
+            results['chain_stats'] = chain_stats
+            results['total_defects'] = sum(chain_defects.values())
+            results['total_records'] = len(data)
+            results['has_chain_fields'] = has_chain_fields
+            return results
+            
         # Special handling for defect rate calculation
-        if analysis.get('calculation_type') == 'defect_rate':
+        elif analysis.get('calculation_type') == 'defect_rate':
             print("Performing defect rate calculation")
             
             # Calculate defect rate for each record
@@ -895,8 +913,55 @@ def format_calculation_response(calc_results):
     
     response_parts = []
     
+    # Special handling for chain defect comparison
+    if 'chain_stats' in calc_results:
+        chain_stats = calc_results['chain_stats']
+        
+        if not chain_stats:
+            return "No data available to compare defects across chains."
+        
+        total_records = calc_results.get('total_records', 0)
+        total_defects = calc_results.get('total_defects', 0)
+        has_chain_fields = calc_results.get('has_chain_fields', False)
+        
+        # If no real chain fields in database, adjust messaging
+        if not has_chain_fields:
+            if all(stats.get('chain') == 'Unknown Chain' for stats in chain_stats):
+                return f"Found {total_records} records | Total defects: {total_defects} | No chain information found in database."
+            else:
+                # We're grouping by a proxy field
+                first_chain = chain_stats[0].get('chain', '') if chain_stats else ''
+                proxy_type = first_chain.split('-')[0] if '-' in first_chain else 'Group'
+                response_parts.append(f"Chain information not found. Showing {proxy_type} statistics instead:")
+        else:
+            response_parts.append(f"Chain Defect Analysis (from {total_records} records, total defects: {total_defects}):")
+        
+        for i, stats in enumerate(chain_stats[:5]):  # Show top 5 chains
+            chain_id = stats.get('chain', 'Unknown')
+            defects = stats.get('defects', 0)
+            production = stats.get('production', 0)
+            defect_rate = stats.get('defect_rate', 0)
+            
+            # Format appropriately based on whether we have real chain fields
+            if has_chain_fields:
+                chain_info = f"#{i+1}: Chain {chain_id} | Defects: {defects} | Production: {production} | Defect Rate: {defect_rate:.2f}%"
+            else:
+                # Remove "Chain" prefix if we're using a proxy field
+                if '-' in chain_id:
+                    chain_info = f"#{i+1}: {chain_id} | Defects: {defects} | Production: {production} | Defect Rate: {defect_rate:.2f}%"
+                else:
+                    chain_info = f"#{i+1}: {chain_id} | Defects: {defects} | Production: {production} | Defect Rate: {defect_rate:.2f}%"
+            
+            response_parts.append(chain_info)
+        
+        # Check if there was only one chain found
+        if len(chain_stats) == 1:
+            response_parts.append("Only one chain/group found in the data.")
+            
+        return " ■ ".join(response_parts)
+    
     # Special handling for average defect rate
-    if 'overall_defect_rate' in calc_results:
+    elif 'overall_defect_rate' in calc_results:
         overall_rate = calc_results.get('overall_defect_rate', 0)
         total_production = calc_results.get('total_production', 0)
         total_defects = calc_results.get('total_defects', 0)
@@ -1131,6 +1196,17 @@ def build_mongodb_query(analysis):
                 {'machine': {'$regex': value, '$options': 'i'}},
                 {'machineId': {'$regex': value, '$options': 'i'}}
             ]
+        elif filter_type == 'chain':
+            # Handle all possible field naming conventions for chain
+            query['$or'] = [
+                {'chain': {'$regex': value, '$options': 'i'}},
+                {'chainId': {'$regex': value, '$options': 'i'}},
+                {'chain_id': {'$regex': value, '$options': 'i'}},
+                {'productChain': {'$regex': value, '$options': 'i'}},
+                {'product_chain': {'$regex': value, '$options': 'i'}},
+                {'chainName': {'$regex': value, '$options': 'i'}},
+                {'chain_name': {'$regex': value, '$options': 'i'}}
+            ]
         elif filter_type == 'order':
             # Try both string and numeric format for order references
             query['$or'] = [
@@ -1152,8 +1228,6 @@ def build_mongodb_query(analysis):
             ]
             # Remove any empty dictionaries which would be invalid in MongoDB
             query['$or'] = [q for q in query['$or'] if q]
-        elif filter_type == 'chain':
-            query['chain'] = {'$regex': value, '$options': 'i'}
     
     return query
 
@@ -1161,11 +1235,34 @@ def format_response(data, analysis):
     """Format the response based on the data and analysis"""
     if not data:
         if 'failures' in analysis['metrics']:
-            return "No machine failures found matching your criteria."
+            date_info = ""
+            if analysis['date_info']:
+                if analysis['date_info']['type'] == 'exact_date':
+                    date_info = f" on {analysis['date_info']['value']}"
+                elif analysis['date_info']['type'] == 'relative_date' and analysis['date_info'].get('description') == 'today':
+                    date_info = " today"
+            
+            return f"No machine failures or interventions found{date_info}."
+            
+        if 'defects' in analysis['metrics']:
+            if analysis.get('calculation_type') == 'chain_defects':
+                return "No defects found for any chains. The database may not have chain information or defect data."
+                
+            date_info = ""
+            if analysis['date_info']:
+                if analysis['date_info']['type'] == 'exact_date':
+                    date_info = f" on {analysis['date_info']['value']}"
+                elif analysis['date_info']['type'] == 'relative_date' and analysis['date_info'].get('description') == 'today':
+                    date_info = " today"
+            
+            return f"No defects found{date_info}."
         
         # For order reference, give more specific message
         if 'order' in analysis['filters']:
             return f"No data found for order {analysis['filters']['order']}. Please check the order reference number and try again."
+            
+        if 'chain' in analysis['filters']:
+            return f"No data found for chain {analysis['filters']['chain']}. The database may not have chain information or the specified chain doesn't exist."
             
         return "No data found matching your criteria."
     
@@ -1409,8 +1506,40 @@ def query_database(analysis):
     if analysis['calculation_type'] == 'comparison' and analysis['comparison'].get('entity_type') == 'workshop':
         return compare_workshops(analysis)
     
+    # Handle different query types based on metrics and calculation types
+    if 'defects' in analysis['metrics']:
+        # Check if calculation type already set by analyze_question
+        if analysis.get('calculation_type') == 'defect_rate':
+            print("Processing defect rate query")
+            # Ensure we have production info for the rate calculation
+            analysis['metrics'].add('production')
+            analysis['math_operation'] = 'rate'
+        
+        # Check for workshop-specific defect filter
+        if 'workshop' in analysis['filters']:
+            print(f"Processing defect query for workshop {analysis['filters']['workshop']}")
+    
+    # Special handling for chain defect comparison
+    if analysis.get('calculation_type') == 'chain_defects':
+        # For "which chain had the most defects" we don't want to filter by chain
+        # We want to get all records to compare across chains
+        if 'chain' in analysis['filters']:
+            print("Removing chain filter for chain defect comparison query")
+            del analysis['filters']['chain']
+    
+    # Special processing for machine failures/interventions
+    if 'failures' in analysis['metrics'] and 'machine' in analysis['filters']:
+        # Check if the machine filter value is actually "interventions" or similar
+        machine_value = analysis['filters'].get('machine', '').lower()
+        if 'intervention' in machine_value:
+            print("Detected 'interventions' as machine filter value - this is likely incorrect")
+            # Remove this as it's not a real machine ID but part of the query phrase
+            del analysis['filters']['machine']
+            print("Removed 'interventions' from machine filter")
+    
+    # Build and execute the query
     query = build_mongodb_query(analysis)
-    print(f"Query: {query}")  # For debugging
+    print(f"Query: {query}")
     
     try:
         # Determine which collections to try based on the query metrics
@@ -1433,24 +1562,11 @@ def query_database(analysis):
                 print("Using empty query to find all machine failures")
             else:
                 print(f"Applying filters to machine failures query: {analysis['filters']}")
-        elif 'efficiency' in analysis['metrics'] and analysis.get('calculation_type') == 'efficiency_rate':
-            # For efficiency rate, prioritize collections with performance data
-            perf_collections = [coll for coll in available_collections 
-                              if any(keyword in coll.lower() for keyword in ['performance', 'production', 'efficiency'])]
-            if perf_collections:
-                collections_to_try.extend(perf_collections)
-            else:
-                # Look for collections we know have performance data from logs
-                if 'performance3' in available_collections:
-                    collections_to_try.append('performance3')
-                if 'monthly_performance' in available_collections:
-                    collections_to_try.append('monthly_performance')
-                    
-            # For efficiency rates, we may need to adjust the query
-            if not analysis['filters'] and len(query) == 0:
-                # Get a reasonable sample of data for efficiency calculations
-                query = {}  # Clear the query to get all records
-                print("Using empty query to get sample for efficiency rate calculation")
+            
+            # Add other collections as fallbacks
+            other_collections = [coll for coll in available_collections 
+                               if coll not in collections_to_try and coll != 'chatbot_conversations']
+            collections_to_try.extend(other_collections)
         else:
             # Prioritize collections that likely contain performance data
             perf_collections = [coll for coll in available_collections 
@@ -1600,6 +1716,121 @@ def query_database(analysis):
     except Exception as e:
         print(f"Database query error: {e}")
         return f"Error querying database: {str(e)}. Please try a different query format."
+
+def query_defect_types():
+    """Query and return defect types information"""
+    try:
+        if mongodb_available and 'defect_types' in available_collections:
+            # Query the defect_types collection
+            defect_types = list(db.defect_types.find().limit(15))
+            
+            if not defect_types:
+                return "No defect types found in the database."
+            
+            # Format the response
+            response_parts = [f"Found {len(defect_types)} defect types:"]
+            
+            for defect in defect_types:
+                # Check for different possible field names for defect name
+                name = defect.get('defectName', defect.get('name', 'Unknown'))
+                description = defect.get('description', defect.get('defectDescription', ''))
+                severity = defect.get('severity', defect.get('defectSeverity', ''))
+                count = defect.get('defectTypes', defect.get('count', 0))
+                
+                defect_info = f"• {name}"
+                if description:
+                    defect_info += f" - {description}"
+                if severity:
+                    defect_info += f" (Severity: {severity})"
+                if count:
+                    defect_info += f" ({count} occurrences)"
+                
+                response_parts.append(defect_info)
+            
+            return " \n".join(response_parts)
+        else:
+            # If defect_types collection is not available, check other collections for defect information
+            defect_info = extract_defect_info_from_performance()
+            if defect_info:
+                return defect_info
+            
+            return "No dedicated defect types information found in the database."
+    except Exception as e:
+        print(f"Error querying defect types: {e}")
+        return f"Error retrieving defect types: {str(e)}"
+
+def extract_defect_info_from_performance():
+    """Extract defect information from performance data if dedicated defect_types collection is not available"""
+    try:
+        if mongodb_available and 'performance3' in available_collections:
+            # Try to get defect distribution info from performance data
+            # Analyze defect fields across records to identify types
+            results = list(db.performance3.find({}, {'defects': 1, 'defectTypes': 1}).limit(100))
+            
+            defect_counts = {}
+            
+            for record in results:
+                # Check for any field that might contain defect type information
+                if 'defectTypes' in record:
+                    defect_types = record.get('defectTypes', {})
+                    if isinstance(defect_types, dict):
+                        for defect_type, count in defect_types.items():
+                            if count > 0:
+                                defect_counts[defect_type] = defect_counts.get(defect_type, 0) + count
+            
+            if defect_counts:
+                # Sort by frequency
+                sorted_defects = sorted(defect_counts.items(), key=lambda x: x[1], reverse=True)
+                
+                response_parts = ["Based on performance data, the following defect types were identified:"]
+                for defect_type, count in sorted_defects:
+                    response_parts.append(f"• {defect_type}: {count} occurrences")
+                
+                return " \n".join(response_parts)
+            
+            # If no defect types found in fields, return a generic message
+            return "No specific defect type information was found, but general defect counts are available."
+            
+        return None
+    except Exception as e:
+        print(f"Error extracting defect info from performance: {e}")
+        return None
+
+def query_most_common_defects():
+    """Query and return the most common defects"""
+    try:
+        if mongodb_available:
+            # First try dedicated defect_types collection
+            if 'defect_types' in available_collections:
+                # Try to sort by defectTypes (count) field first
+                defect_types = list(db.defect_types.find().sort('defectTypes', -1).limit(5))
+                
+                # If no results or no proper count field, try to get from performance data
+                if not defect_types or ('defectTypes' not in defect_types[0] and 'frequency' not in defect_types[0]):
+                    return extract_defect_info_from_performance() or "Could not determine most common defects as frequency data is not available."
+                
+                response_parts = ["The most common defect types are:"]
+                for i, defect in enumerate(defect_types):
+                    # Try different possible field names
+                    name = defect.get('defectName', defect.get('name', 'Unknown'))
+                    count = defect.get('defectTypes', defect.get('frequency', defect.get('count', 0)))
+                    description = defect.get('description', defect.get('defectDescription', ''))
+                    
+                    defect_info = f"{i+1}. {name} ({count} occurrences)"
+                    if description:
+                        defect_info += f" - {description}"
+                    
+                    response_parts.append(defect_info)
+                
+                return " \n".join(response_parts)
+            else:
+                # If no dedicated collection, extract from performance data
+                return extract_defect_info_from_performance() or "No defect type information found in the database."
+        
+        return "Database not available for querying defect information."
+    except Exception as e:
+        print(f"Error querying most common defects: {e}")
+        return f"Error retrieving most common defects: {str(e)}"
 
 def compare_workshops(analysis):
     """Compare data between two workshops"""
@@ -1789,27 +2020,136 @@ def safe_get_numeric(record, field_names, default=0):
                 continue
     return default
 
+# Add a new function to extract specific defect type from a question
+def extract_defect_type_from_question(text):
+    """Extract specific defect type from a question"""
+    # Common patterns for questions about specific defect types
+    specific_defect_pattern = re.compile(r'how\s+many\s+([a-zA-Z\s]+?)\s+(defects?|issues?|problems?|reported|found)', re.IGNORECASE)
+    match = specific_defect_pattern.search(text)
+    
+    if match:
+        defect_type = match.group(1).strip().lower()
+        print(f"Extracted specific defect type from question: '{defect_type}'")
+        return defect_type
+    
+    return None
+
+# Function to query for a specific defect type
+def query_specific_defect_type(defect_type):
+    """Query for a specific defect type and return its count and statistics"""
+    try:
+        if mongodb_available and 'performance3' in available_collections:
+            # Get recent records with defect types
+            results = list(db.performance3.find({}, {'defects': 1, 'defectTypes': 1, 'date': 1}).sort('date', -1).limit(100))
+            
+            if not results:
+                return f"No data found for defect type: {defect_type}"
+            
+            total_records = len(results)
+            total_of_specific_defect = 0
+            total_defects = 0
+            
+            # Count the specific defect type
+            for record in results:
+                if 'defectTypes' in record and isinstance(record['defectTypes'], dict):
+                    for d_type, count in record['defectTypes'].items():
+                        # Case insensitive partial match for the defect type
+                        if defect_type in d_type.lower():
+                            try:
+                                count_value = float(count)
+                                total_of_specific_defect += count_value
+                            except (ValueError, TypeError):
+                                continue
+                
+                # Add to total defects
+                total_defects += float(record.get('defects', 0))
+            
+            # Format response
+            if total_of_specific_defect > 0:
+                percentage = (total_of_specific_defect / total_defects * 100) if total_defects > 0 else 0
+                return f"{defect_type.title()} defects reported: {total_of_specific_defect:.0f} ({percentage:.1f}% of all defects)"
+            else:
+                return f"No {defect_type} defects found in the last {total_records} records."
+                
+        return f"No data available to check for {defect_type} defects."
+        
+    except Exception as e:
+        print(f"Error querying specific defect type: {e}")
+        return f"Error retrieving information for {defect_type} defects: {str(e)}"
+
 @app.route("/chatbot", methods=["POST"])
 def chatbot():
     data = request.get_json()
     message = data.get("message", "").lower()
     user_id = data.get("user_id", "anonymous")  # Get user_id from request or use 'anonymous'
     
-    # Analyze the question
+    print(f"Received message: '{message}'")
+    
+    # First, analyze the question using the neural intent model
     analysis = analyze_question(message)
+    
+    # Check if we have a defect question about a specific defect type
+    if "defects" in analysis['metrics']:
+        specific_defect_type = extract_defect_type_from_question(message)
+        if specific_defect_type:
+            print(f"Detected specific defect type query for: {specific_defect_type}")
+            response = query_specific_defect_type(specific_defect_type)
+            save_conversation(user_id, message, response, "defects")
+            return {"response": response}
+        
+        # Check for special types of defect queries that need specialized handlers
+        question_types = {
+            'defect_types': re.compile(r'(what|which|list|show).*(types?|kinds?|categories?|common)\s+(?:of\s+)?defects', re.IGNORECASE),
+            'defect_most_common': re.compile(r'(most\s+common|main|primary|principal)\s+defects?', re.IGNORECASE),
+            'defect_stats': re.compile(r'(defect\s*stats|defect\s*statistics|statistics\s+(?:of|for|about)\s+defects)', re.IGNORECASE)
+        }
+        
+        for q_type, pattern in question_types.items():
+            if pattern.search(message):
+                if q_type == 'defect_types':
+                    response = query_defect_types()
+                elif q_type == 'defect_most_common':
+                    response = query_most_common_defects()
+                elif q_type == 'defect_stats':
+                    response = query_defect_statistics()
+                
+                save_conversation(user_id, message, response, "defects")
+                return {"response": response}
+    
+    # If no metrics were identified, it's possible that the model didn't recognize the intent
+    if not analysis['metrics']:
+        return {"response": "I'm sorry, I didn't understand that question. Could you please rephrase it?"}
     
     # Query the database and get response
     response = query_database(analysis)
     
-    # Save the conversation to MongoDB
+    # Determine intent from the metrics
+    intent = "unknown"
+    if "defects" in analysis['metrics']:
+        intent = "defects"
+    elif "failures" in analysis['metrics']:
+        intent = "failures"
+    elif "order" in analysis['metrics']:
+        intent = "orders"
+    elif "production" in analysis['metrics'] or "efficiency" in analysis['metrics']:
+        intent = "performance"
+    
+    # Save conversation
+    save_conversation(user_id, message, response, intent)
+    
+    return {"response": response}
+
+def save_conversation(user_id, question, response, intent):
+    """Save the conversation to MongoDB"""
     if mongodb_available and db is not None:
         try:
             # Create a document with the conversation data
             conversation_doc = {
                 "user_id": user_id,
-                "question": message,
+                "question": question,
                 "response": response,
-                "timestamp": datetime.utcnow()
+                "timestamp": datetime.utcnow(),
+                "intent": intent
             }
             
             # Insert into the chatbot_conversations collection
@@ -1818,7 +2158,95 @@ def chatbot():
         except Exception as e:
             print(f"Error saving chatbot conversation: {str(e)}")
     
-    return {"response": response}
+def query_defect_statistics():
+    """Query and return detailed defect statistics"""
+    try:
+        if mongodb_available:
+            # Try to get defect data from performance collection
+            if 'performance3' in available_collections:
+                # Get recent defect data 
+                pipeline = [
+                    {
+                        "$project": {
+                            "defects": 1,
+                            "produced": 1,
+                            "date": 1,
+                            "workshop": 1,
+                            "defectTypes": 1
+                        }
+                    },
+                    {
+                        "$sort": {"date": -1}
+                    },
+                    {
+                        "$limit": 100
+                    }
+                ]
+                
+                results = list(db.performance3.aggregate(pipeline))
+                
+                if not results:
+                    return "No defect statistics found in the database."
+                
+                # Calculate basic statistics
+                total_records = len(results)
+                total_defects = sum(float(r.get('defects', 0)) for r in results)
+                total_production = sum(float(r.get('produced', 0)) for r in results)
+                
+                # Calculate defect rate
+                defect_rate = (total_defects / total_production * 100) if total_production > 0 else 0
+                
+                # Get defect types breakdown if available
+                defect_type_counts = {}
+                for record in results:
+                    if 'defectTypes' in record and isinstance(record['defectTypes'], dict):
+                        for defect_type, count in record['defectTypes'].items():
+                            try:
+                                count_value = float(count)
+                                if count_value > 0:
+                                    defect_type_counts[defect_type] = defect_type_counts.get(defect_type, 0) + count_value
+                            except (ValueError, TypeError):
+                                continue
+                
+                # Format the response
+                response_parts = [f"Defect Statistics (based on {total_records} recent records):"]
+                response_parts.append(f"• Total defects: {total_defects:.0f}")
+                response_parts.append(f"• Total production: {total_production:.0f} units")
+                response_parts.append(f"• Overall defect rate: {defect_rate:.2f}%")
+                
+                # Add defect types breakdown if available
+                if defect_type_counts:
+                    response_parts.append("\nDefect types breakdown:")
+                    sorted_defects = sorted(defect_type_counts.items(), key=lambda x: x[1], reverse=True)
+                    for defect_type, count in sorted_defects[:5]:  # Show top 5
+                        percentage = (count / total_defects * 100) if total_defects > 0 else 0
+                        response_parts.append(f"• {defect_type}: {count:.0f} ({percentage:.1f}%)")
+                
+                # Add workshop breakdown if available
+                workshop_defects = {}
+                for record in results:
+                    if 'workshop' in record:
+                        workshop = record.get('workshop', 'Unknown')
+                        defects = float(record.get('defects', 0))
+                        if workshop not in workshop_defects:
+                            workshop_defects[workshop] = 0
+                        workshop_defects[workshop] += defects
+                
+                if len(workshop_defects) > 1:  # Only show if we have multiple workshops
+                    response_parts.append("\nDefects by workshop:")
+                    sorted_workshops = sorted(workshop_defects.items(), key=lambda x: x[1], reverse=True)
+                    for workshop, count in sorted_workshops:
+                        percentage = (count / total_defects * 100) if total_defects > 0 else 0
+                        response_parts.append(f"• {workshop}: {count:.0f} ({percentage:.1f}%)")
+                
+                return "\n".join(response_parts)
+            
+            return "No defect data found in the system."
+        
+        return "Database not available for querying defect statistics."
+    except Exception as e:
+        print(f"Error querying defect statistics: {e}")
+        return f"Error retrieving defect statistics: {str(e)}"
 
 @app.route("/chatbot/diagnostics", methods=["GET"])
 def diagnostics():

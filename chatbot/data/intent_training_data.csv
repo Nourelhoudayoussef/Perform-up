@@ -1,0 +1,56 @@
+text,intent
+What is the production for Workshop 1?,performance
+What is the production for Workshop 1?,performance
+What is the production for Workshop 1?,performance
+What is the production for Workshop 1?,performance
+What is the production for Workshop 1?,performance
+What is the production performance last month?,performance
+Show me the production data for workshop 1,performance
+How many units were produced yesterday?,performance
+What was the production rate per hour last week?,performance
+Show me the production efficiency for workshop 2,performance
+What's the current month's production output?,performance
+I need to see today's production statistics,performance
+Show performance for Workshop 1 this month,performance
+What's the production trend for this week?,performance
+Give me the hourly production rate,performance
+How many defects were found yesterday?,defects
+Show me the defect count by type,defects
+What are the most common defects?,defects
+Show defect rate for workshop 1,defects
+Which defect type occurred the most last month?,defects
+Show me the total defects found today,defects
+What's the current defect rate?,defects
+Give me stats on quality issues this week,defects
+How many quality problems were reported yesterday?,defects
+Show defect distribution by type,defects
+Show me the machine failures from last week,failures
+How many machines broke down yesterday?,failures
+What's the most common reason for machine failures?,failures
+Give me the machine maintenance records,failures
+Show me equipment breakdown statistics,failures
+When was the last machine intervention?,failures
+How often do machines fail per month?,failures
+Show machine failure distribution by type,failures
+What machines need maintenance soon?,failures
+Give me stats on equipment downtime,failures
+What's the status of order 102?,orders
+Give me details about order 102,orders
+What's the status of order 103?,orders
+Give me details about order 103,orders
+What's the status of order 105?,orders
+Give me details about order 105,orders
+What's the status of order 104?,orders
+Give me details about order 104,orders
+What's the status of order 101?,orders
+Give me details about order 101,orders
+Show me the status of order #12345,orders
+When will order #54321 be completed?,orders
+List all current orders,orders
+What's the status of yesterday's orders?,orders
+Show me orders from last week,orders
+Which orders are delayed?,orders
+Give me information about the latest orders,orders
+Track order #98765,orders
+Show me pending orders,orders
+What's the completion rate of this month's orders?,orders

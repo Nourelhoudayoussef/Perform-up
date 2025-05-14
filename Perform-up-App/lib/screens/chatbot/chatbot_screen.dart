@@ -15,11 +15,70 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   final List<ChatMessage> _messages = [];
   final ChatbotService _chatbotService = ChatbotService();
   bool _isLoading = false;
+  bool _isLoadingHistory = true;
 
   @override
   void initState() {
     super.initState();
+    _loadChatHistory();
+  }
+
+  // Load chat history from the API
+  Future<void> _loadChatHistory() async {
+    setState(() {
+      _isLoadingHistory = true;
+    });
+
+    try {
+      // Get chat history from the service
+      final conversations = await _chatbotService.getChatHistory();
+      
+      if (conversations.isNotEmpty) {
+        setState(() {
+          // Clear current messages
+          _messages.clear();
+          
+          // Add each conversation to the messages list
+          for (var conversation in conversations) {
+            // Add user question
+            _messages.add(ChatMessage(
+              text: conversation['question'] ?? '',
+              isUser: true,
+            ));
+            
+            // Add chatbot response
+            _messages.add(ChatMessage(
+              text: conversation['response'] ?? '',
+              isUser: false,
+            ));
+          }
+        });
+      } else {
+        // If no history, just add the welcome message
+        _addWelcomeMessage();
+      }
+    } catch (e) {
+      print('Error loading chat history: $e');
+      // If there's an error, show welcome message
     _addWelcomeMessage();
+      
+      // Show a snackbar with the error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not load chat history. Starting a new conversation.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      setState(() {
+        _isLoadingHistory = false;
+      });
+      
+      // Scroll to the bottom after loading history
+      _scrollToBottom();
+    }
   }
 
   void _addWelcomeMessage() {
@@ -117,11 +176,25 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           icon: const Icon(Icons.arrow_back, color: Color(0xC5000000)),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          // Add refresh button to reload chat history
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Color(0xC5000000)),
+            onPressed: _loadChatHistory,
+            tooltip: 'Reload conversation history',
+          ),
+        ],
       ),
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
+            child: _isLoadingHistory
+                ? const Center(
+                    child: CircularProgressIndicator(
+                      color: Color(0xFF6BBFB5),
+                    ),
+                  )
+                : ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               itemCount: _messages.length,

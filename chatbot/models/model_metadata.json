@@ -1,0 +1,11 @@
+{
+  "intent_labels": [
+    "defects",
+    "failures",
+    "orders",
+    "performance"
+  ],
+  "vocab_size": 62,
+  "hidden_dim": 64,
+  "output_dim": 4
+}
