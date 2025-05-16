@@ -38,8 +38,21 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           // Clear current messages
           _messages.clear();
           
+          // Sort conversations by timestamp if needed
+          // They should already be sorted from the API, but we'll ensure it here
+          conversations.sort((a, b) {
+            final aTime = a['timestamp'] ?? '';
+            final bTime = b['timestamp'] ?? '';
+            return aTime.compareTo(bTime); // Older first
+          });
+          
+          print('Displaying ${conversations.length} conversations');
+          
           // Add each conversation to the messages list
           for (var conversation in conversations) {
+            final timestamp = conversation['timestamp'] ?? '';
+            print('Adding conversation from: $timestamp');
+            
             // Add user question
             _messages.add(ChatMessage(
               text: conversation['question'] ?? '',
@@ -54,13 +67,14 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           }
         });
       } else {
+        print('No conversations found, adding welcome message');
         // If no history, just add the welcome message
         _addWelcomeMessage();
       }
     } catch (e) {
       print('Error loading chat history: $e');
       // If there's an error, show welcome message
-    _addWelcomeMessage();
+      _addWelcomeMessage();
       
       // Show a snackbar with the error message
       if (mounted) {
