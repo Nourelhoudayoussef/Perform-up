@@ -593,12 +593,12 @@ public class ChatController {
      * @return Map of userId to last message content
      */
     @PostMapping("/messages/last-messages")
-    public ResponseEntity<Map<String, String>> getLastMessagesForUsers(@RequestBody Map<String, Object> requestBody) {
+    public ResponseEntity<Map<String, Map<String, Object>>> getLastMessagesForUsers(@RequestBody Map<String, Object> requestBody) {
         String currentUserId = (String) requestBody.get("currentUserId");
         @SuppressWarnings("unchecked")
         List<String> userIds = (List<String>) requestBody.get("userIds");
         
-        Map<String, String> result = new HashMap<>();
+        Map<String, Map<String, Object>> result = new HashMap<>();
         
         for (String userId : userIds) {
             // Generate chat ID using the same logic as in the frontend
@@ -608,17 +608,19 @@ public class ChatController {
             Message lastMessage = messageRepository.findTopByChatGroupIdOrderByTimestampDesc(chatId);
             
             if (lastMessage != null) {
-                // Truncate message if it's too long (optional)
-                String content = lastMessage.getContent();
-                if (content.length() > 30) {
-                    content = content.substring(0, 27) + "...";
-                }
-                result.put(userId, content);
+            Map<String, Object> messageInfo = new HashMap<>();
+            String content = lastMessage.getContent();
+            if (content.length() > 30) {
+                content = content.substring(0, 27) + "...";
             }
+            messageInfo.put("content", content);
+            messageInfo.put("timestamp", lastMessage.getTimestamp()); // Make sure this is serializable (e.g., String or ISO format)
+            result.put(userId, messageInfo);
         }
-        
-        return ResponseEntity.ok(result);
     }
+
+    return ResponseEntity.ok(result);
+}
 
     @PostMapping("/chat")
     public Mono<ResponseEntity<String>> chat(@RequestBody ChatRequest request) {

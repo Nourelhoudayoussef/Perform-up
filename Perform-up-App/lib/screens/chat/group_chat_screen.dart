@@ -359,7 +359,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             toolbarHeight: 70,
             leading: IconButton(
               icon: Icon(FontAwesomeIcons.arrowLeft, color: Color(0xC5000000), size: 20),
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.of(context).pop(true),
             ),
             title: Text(
               widget.groupName,

@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../intervention_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../widgets/floating_ai_bubble.dart';
 
 class InterventionScreen extends StatefulWidget {
   const InterventionScreen({super.key});
@@ -316,173 +317,175 @@ class _InterventionScreenState extends State<InterventionScreen> {
       backgroundColor: const Color(0xFFF0F7F5),
       appBar: AppBar(
         backgroundColor: const Color(0xFFD0ECE8),
-        elevation: 4,
+        elevation: 0,
         shadowColor: Colors.black.withOpacity(0.25),
         title: Text(
           'Machine Interventions',
           style: GoogleFonts.poppins(
-            fontSize: 24,
+            fontSize: 20,
             fontWeight: FontWeight.w500,
             color: const Color(0xC5000000),
           ),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(FontAwesomeIcons.solidBell, color: Color(0xC5000000)),
-            onPressed: () => Navigator.pushNamed(context, '/notifications'),
+          Container(
+            margin: const EdgeInsets.only(right: 16),
+            child: IconButton(
+              icon: const Icon(FontAwesomeIcons.solidBell, color: Color(0xC5000000)),
+              onPressed: () => Navigator.pushNamed(context, '/notifications'),
+            ),
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+      body: Stack(
+        children: [
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(
-                        flex: 1,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: _buildStatCard(
-                            FontAwesomeIcons.tasks,
-                            '$totalTasks',
-                            'Tasks done',
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          Expanded(
+                            flex: 1,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              child: _buildStatCard(
+                                FontAwesomeIcons.tasks,
+                                '$totalTasks',
+                                'Tasks done',
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 1,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              child: _buildStatCard(
+                                FontAwesomeIcons.clock,
+                                '$avgTime',
+                                'Avg min',
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 1,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              child: _buildStatCard(
+                                FontAwesomeIcons.wrench,
+                                '$machinesChecked',
+                                'Machines',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      if (!_isAddingIntervention)
+                        ElevatedButton(
+                          onPressed: () => setState(() => _isAddingIntervention = true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6BBFB5),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: Text(
+                            '+ New Machine Intervention',
+                            style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
-                      ),
-                      Expanded(
-                        flex: 1,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: _buildStatCard(
-                            FontAwesomeIcons.clock,
-                            '$avgTime',
-                            'Avg min',
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 1,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: _buildStatCard(
-                            FontAwesomeIcons.wrench,
-                            '$machinesChecked',
-                            'Machines',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  if (!_isAddingIntervention)
-                    ElevatedButton(
-                      onPressed: () => setState(() => _isAddingIntervention = true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6BBFB5),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: Text(
-                        '+ New Machine Intervention',
+                      if (_isAddingIntervention) ...[
+                        const SizedBox(height: 16),
+                        _buildInterventionForm(),
+                      ],
+                      const SizedBox(height: 24),
+                      Text(
+                        'Recent interventions',
                         style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontSize: 16,
+                          fontSize: 18,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
-                    ),
-                  if (_isAddingIntervention) ...[
-                    const SizedBox(height: 16),
-                    _buildInterventionForm(),
-                  ],
-                  const SizedBox(height: 24),
-                  Text(
-                    'Recent interventions',
-                    style: GoogleFonts.poppins(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  ...recentInterventions.map((intervention) => Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      const SizedBox(height: 16),
+                      ...recentInterventions.map((intervention) => Card(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          intervention['machineReference'] ?? '',
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w500,
-                                          ),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              intervention['machineReference'] ?? '',
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              intervention['description'] ?? '',
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 14,
+                                                color: Colors.black87,
+                                              ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
                                         ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          intervention['description'] ?? '',
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 14,
-                                            color: Colors.black87,
-                                          ),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '${intervention['timeTaken'] ?? 0} min',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 14,
+                                          color: Colors.black54,
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '${intervention['timeTaken'] ?? 0} min',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 14,
-                                      color: Colors.black54,
+                                  if (intervention['date'] != null) ...[
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      _formatDate(intervention['date']),
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 12,
+                                        color: Colors.black54,
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ],
                               ),
-                              if (intervention['date'] != null) ...[
-                                const SizedBox(height: 8),
-                                Text(
-                                  _formatDate(intervention['date']),
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 12,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      )),
-                ],
-              ),
-            ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.pushNamed(context, '/chatbot'),
-        icon: const Icon(Icons.smart_toy),
-        label: const Text('AI Help'),
-        backgroundColor: const Color(0xFF6BBFB5),
-        elevation: 4,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                          )),
+                    ],
+                  ),
+                ),
+          FloatingAIBubble(
+            onTap: () => Navigator.pushNamed(context, '/chatbot'),
+          ),
+        ],
       ),
     );
   }

@@ -65,6 +65,16 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
               group.name.trim() != 'Chat'
             ).toList();
             
+            // Sort by last message time (most recent first)
+            _chatGroups.sort((a, b) {
+              final aTime = a.lastMessageTime?.toString();
+              final bTime = b.lastMessageTime?.toString();
+              if (aTime == null && bTime == null) return 0;
+              if (aTime == null) return 1;
+              if (bTime == null) return -1;
+              return DateTime.parse(bTime).compareTo(DateTime.parse(aTime));
+            });
+            
             _unreadCounts = unreadCounts;
             
             _availableUsers = users.where((user) => 
@@ -165,6 +175,18 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
       
       await _loadCurrentUserAndData();
       
+      // Sort by last message time (most recent first) after creating a group
+      setState(() {
+        _chatGroups.sort((a, b) {
+          final aTime = a.lastMessageTime?.toString();
+          final bTime = b.lastMessageTime?.toString();
+          if (aTime == null && bTime == null) return 0;
+          if (aTime == null) return 1;
+          if (bTime == null) return -1;
+          return DateTime.parse(bTime).compareTo(DateTime.parse(aTime));
+        });
+      });
+      
       // Show success message and switch to search view
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -219,17 +241,17 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
       backgroundColor: Color(0xFFF0F7F5),
       appBar: AppBar(
         backgroundColor: Color(0xFFD0ECE8),
-        elevation: 4.0,
-        shadowColor: Colors.black.withOpacity(0.25),
-        toolbarHeight: 100,
+        elevation: 0,
+        shadowColor: Colors.black.withOpacity(0.1),
+        toolbarHeight: 70,
         leading: IconButton(
-          icon: Icon(FontAwesomeIcons.arrowLeft, color: Color(0xC5000000)),
-          onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
-          "Group Chats",
+          "Your Groups",
           style: GoogleFonts.poppins(
-            fontSize: 24,
+            fontSize: 20,
             fontWeight: FontWeight.w500,
             color: Color(0xC5000000),
           ),
@@ -515,19 +537,24 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
           TextField(
             controller: _searchController,
             decoration: InputDecoration(
+              prefixIcon: Icon(FontAwesomeIcons.search, color: Color(0xFF9E9E9E)),
               hintText: "Search by group name..",
               hintStyle: GoogleFonts.poppins(
                       fontSize: 14.0,
                       fontWeight: FontWeight.w500,
-                      color: Color(0x60000000),),
-              prefixIcon: Icon(FontAwesomeIcons.search, color: Color(0x39000000)),
-              filled: true,
-              fillColor: const Color(0xFFF1F1F1),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(25),
-                borderSide: BorderSide.none,
+                color: Color(0xFFB0B0B0),
               ),
-              contentPadding: EdgeInsets.symmetric(horizontal: 20),
+              filled: true,
+              fillColor: Color(0xFFF5F5F5),
+              contentPadding: EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(25),
+                borderSide: BorderSide(color: Color(0xFFE0E0E0), width: 1),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(25),
+                borderSide: BorderSide(color: Color(0xFFBDBDBD), width: 1.5),
+              ),
             ),
             onChanged: (value) {
               _searchChatGroups(value);
@@ -549,14 +576,20 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                   itemCount: _chatGroups.length,
                   itemBuilder: (context, index) {
                     final group = _chatGroups[index];
-                    return ListTile(
-                      leading: 
-                        const Icon(
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                      child: Card(
+                        color: Colors.white,
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: ListTile(
+                          leading: const Icon(
                           FontAwesomeIcons.users,
                           color: Color(0xC5000000),
                           size: 20,
                         ),
-                      
                       title: Text(
                         group.name,
                         style: GoogleFonts.poppins(
@@ -571,12 +604,25 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.poppins(
                               color: Color(0x80000000),
-                              fontSize: 12,
+                                  fontSize: 13,
                             ),
                           )
                         : null,
-                      trailing: _unreadCounts[group.id] != null && _unreadCounts[group.id]! > 0
-                        ? CircleAvatar(
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              if (group.lastMessageTime != null)
+                                Text(
+                                  _formatTime(group.lastMessageTime?.toString()),
+                                  style: TextStyle(
+                                    color: Colors.grey[500],
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              if (_unreadCounts[group.id] != null && _unreadCounts[group.id]! > 0)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: CircleAvatar(
                             radius: 10,
                             backgroundColor: Color(0xFF6BBFB5),
                             child: Text(
@@ -586,15 +632,15 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                                 color: Colors.white,
                               ),
                             ),
-                          )
-                        : null,
+                                  ),
+                                ),
+                            ],
+                          ),
                       onTap: () async {
                         // Mark chat as read when user taps on it
                         if (_currentUserId != null && (_unreadCounts[group.id] ?? 0) > 0) {
                           try {
                             await _apiService.markChatAsRead(group.id, _currentUserId!);
-                            
-                            // Update unread counts locally
                             setState(() {
                               _unreadCounts[group.id] = 0;
                             });
@@ -602,7 +648,6 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                             print('Error marking chat as read: $e');
                           }
                         }
-                        
                         Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -612,11 +657,24 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                               messages: null, // Will use default messages
                             ),
                           ),
-                        ).then((_) {
-                          // Refresh data when returning from chat screen
+                            ).then((shouldRefresh) {
+                              if (shouldRefresh == true) {
                           _loadCurrentUserAndData();
+                                setState(() {
+                                  _chatGroups.sort((a, b) {
+                                    final aTime = a.lastMessageTime?.toString();
+                                    final bTime = b.lastMessageTime?.toString();
+                                    if (aTime == null && bTime == null) return 0;
+                                    if (aTime == null) return 1;
+                                    if (bTime == null) return -1;
+                                    return DateTime.parse(bTime).compareTo(DateTime.parse(aTime));
+                                  });
+                                });
+                              }
                         });
                       },
+                        ),
+                      ),
                     );
                   },
                 ),
@@ -624,5 +682,12 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
         ],
       ),
     );
+  }
+
+  String _formatTime(String? isoString) {
+    if (isoString == null) return '';
+    final dateTime = DateTime.tryParse(isoString);
+    if (dateTime == null) return '';
+    return "${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}";
   }
 } 

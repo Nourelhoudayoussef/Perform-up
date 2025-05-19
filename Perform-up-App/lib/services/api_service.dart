@@ -20,16 +20,16 @@ extension MapStringDynamicExtension on Map<String, dynamic> {
 
 class ApiService {
   // Check if running on emulator or real device and use appropriate URL
-  static String get baseUrl {
+  /*static String get baseUrl {
     if (Platform.isAndroid) {
-      return 'http://10.0.2.2:8080';
+      return 'http://192.168.0.102:8080';
     } else if (Platform.isIOS) {
       return 'http://localhost:8080';
     }
-    return 'http://192.168.137.125:8080'; // Fallback 
-  }
+    return 'http://192.168.3.128:8080'; // Fallback 
+  }*/
 
-  //static String baseUrl = 'http://192.168.3.128:8080';
+  static String baseUrl = 'http://192.168.1.19:8080';
 
 
   static const Duration _minRequestInterval = Duration(milliseconds: 500);
@@ -1743,7 +1743,7 @@ class ApiService {
   }
 
   // Get the last messages for multiple users efficiently
-  Future<Map<String, String>> getLastMessagesForUsers(String currentUserId, List<String> userIds) async {
+  Future<Map<String, dynamic>> getLastMessagesForUsers(String currentUserId, List<String> userIds) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/chat/messages/last-messages'),
@@ -1756,7 +1756,7 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = json.decode(response.body);
-        return data.map((key, value) => MapEntry(key, value as String));
+        return data;
       } else {
         print('Failed to get last messages: ${response.statusCode}');
         return {};

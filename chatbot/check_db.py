@@ -5,7 +5,7 @@ import sys
 # Connect to MongoDB
 print("Connecting to MongoDB...")
 try:
-    client = MongoClient("mongodb+srv://nour:nour123@cluster0.vziu9.mongodb.net/clothing_factory?retryWrites=true&w=majority",
+    client = MongoClient("mongodb+srv://ghezlen:ghezlenabc@cluster0.vziu9.mongodb.net/clothing_factory?retryWrites=true&w=majority",
                          serverSelectionTimeoutMS=5000)
     # Test connection
     client.admin.command('ping')

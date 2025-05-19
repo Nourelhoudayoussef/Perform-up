@@ -5,7 +5,7 @@ echo Starting Flask Chatbot...
 start "chatbot" cmd /k "cd chatbot && python app.py"
 
 echo Starting Spring Boot Backend...
-start "pfeBack" cmd /k "cd pfeBack && mvnw spring-boot:run"
+start "pfeBack" cmd /k "cd pfeBack && mvn spring-boot:run"
 
 echo Services started!
 echo Flask Chatbot: http://localhost:5001

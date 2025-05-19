@@ -18,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/technician/intervention_screen.dart';
 import 'screens/supervisor/home_supervisor.dart';
 import 'screens/chatbot/chatbot_screen.dart';
+import 'screens/manager/home_manager.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized(); 
@@ -48,7 +49,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Perform Up',
+      title: 'PerformUp',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6BBFB5)),
@@ -79,7 +80,7 @@ class MyApp extends StatelessWidget {
               );
             } else {
               return BaseLayout(
-                child: const ChatListScreen(),
+                child: const TestScreen(),
                 currentIndex: 0,
               );
             }

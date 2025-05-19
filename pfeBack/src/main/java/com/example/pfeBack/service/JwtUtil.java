@@ -57,6 +57,7 @@ public class JwtUtil {
     @SuppressWarnings("deprecation")
 	private Claims extractAllClaims(String token) {
         return Jwts.parserBuilder()
+                .setAllowedClockSkewSeconds(60)
                 .setSigningKey(secret)
                 .build()
                 .parseClaimsJws(token)

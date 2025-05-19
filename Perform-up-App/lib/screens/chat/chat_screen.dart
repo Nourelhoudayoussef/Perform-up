@@ -36,24 +36,28 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _currentUsername;
   StreamSubscription? _chatSubscription;
   bool _isDisposed = false;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
-    print('[ChatScreen] initState called');
-    print('userId: "${widget.userId}"');
-    print('username: "${widget.username}"');
-    print('profilePicture: "${widget.profilePicture}"');
     _loadUserData();
     _initializeChat();
-    
-    // Subscribe to websocket messages
     _subscribeToWebSocketMessages();
+    _startRefreshTimer();
 
-    // Add a post-frame callback to scroll to bottom after the first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _scrollToBottom();
+      }
+    });
+  }
+
+  void _startRefreshTimer() {
+    // Refresh messages every 30 seconds
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (!_isDisposed && mounted) {
+        _loadMessages();
       }
     });
   }
@@ -64,28 +68,25 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageController.dispose();
     _scrollController.dispose();
     _chatSubscription?.cancel();
+    _refreshTimer?.cancel();
     super.dispose();
   }
 
-  // Subscribe to WebSocket messages
   void _subscribeToWebSocketMessages() {
-    _chatSubscription?.cancel(); // Cancel any existing subscription
+    _chatSubscription?.cancel();
     
     _chatSubscription = _webSocketService.chatMessageStream.listen((message) {
-      if (_isDisposed) return; // Don't process messages if disposed
+      if (_isDisposed) return;
       
-      // Check if this message belongs to this chat conversation
       if (message.chatGroupId == generateChatGroupId(_currentUserId!, widget.userId)) {
         if (mounted) {
           setState(() {
-            // Add the message if it's not already in the list
             if (!_messages.any((m) => m.id == message.id)) {
               _messages.add(message);
               _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
             }
           });
           
-          // Scroll to bottom after new message is received
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               _scrollToBottom();
@@ -97,15 +98,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadUserData() async {
-    print('[ChatScreen] _loadUserData called');
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString('userId');
       final username = prefs.getString('username');
-      
-      print('Loaded user data:'); // Debug log
-      print('userId: "$userId"'); // Debug log
-      print('username: "$username"'); // Debug log
       
       if (mounted) {
         setState(() {
@@ -119,7 +115,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _initializeChat() async {
-    print('[ChatScreen] _initializeChat called');
     setState(() {
       _isLoading = true;
     });
@@ -128,19 +123,22 @@ class _ChatScreenState extends State<ChatScreen> {
       await _loadUserData();
       await _loadMessages();
       
-      if (_webSocketService.isConnected) {
-        print('WebSocket already connected');
-      } else {
-        print('Connecting to WebSocket...');
+      if (!_webSocketService.isConnected) {
         await _webSocketService.connect();
       }
       
-      // Subscribe to the chat topic after connecting
       final chatGroupId = generateChatGroupId(_currentUserId!, widget.userId);
-      print('Subscribing to chat topic: $chatGroupId');
       _webSocketService.subscribeToChatGroup(chatGroupId);
     } catch (e) {
       print('Error initializing chat: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error connecting to chat: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -151,15 +149,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadMessages() async {
-    if (_currentUserId == null) {
-      print('Current user ID is null, cannot load messages');
-      return;
-    }
+    if (_currentUserId == null) return;
     
     try {
-      final groupId = generateChatGroupId(_currentUserId!, widget.userId);
-      print('[ChatScreen] Loading messages for chat group: $groupId');
-      
       final messages = await _apiService.getIndividualMessages(
         _currentUserId!,
         widget.userId,
@@ -171,7 +163,6 @@ class _ChatScreenState extends State<ChatScreen> {
           _isLoading = false;
         });
         
-        // Schedule scroll to bottom after messages are loaded
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             _scrollToBottom();
@@ -179,25 +170,31 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     } catch (e) {
-      print('[ChatScreen] Error loading messages: $e');
+      print('Error loading messages: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
         });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading messages: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
 
   String generateChatGroupId(String userId1, String userId2) {
     List<String> ids = [userId1, userId2];
-    ids.sort(); // Sort to ensure the same ID regardless of order
+    ids.sort();
     return 'individual_${ids[0]}_${ids[1]}';
   }
 
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
-        0.0, // Since we're using reverse: true, 0.0 is the bottom
+        0.0,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
@@ -206,12 +203,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendMessage() async {
     if (_isDisposed) return;
-    print('[ChatScreen] _sendMessage called');
     if (_messageController.text.trim().isEmpty) return;
     
     final String content = _messageController.text.trim();
     
-    // Create a temporary message for the UI
     final tempMessage = Message(
       id: 'temp_${DateTime.now().millisecondsSinceEpoch}',
       senderId: _currentUserId!,
@@ -229,7 +224,6 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
     
-    // Scroll to bottom after message is added
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _scrollToBottom();
@@ -237,17 +231,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      // Send message via REST API
       final message = await _apiService.sendIndividualMessage(
         _currentUserId!,
         widget.userId,
         content,
       );
 
-      // Also send via WebSocket for real-time delivery
       await _webSocketService.sendChatMessage(widget.userId, content);
 
-      // Replace the temporary message with the real one
       if (mounted) {
         setState(() {
           final index = _messages.indexWhere((m) => 
@@ -264,7 +255,6 @@ class _ChatScreenState extends State<ChatScreen> {
       print('Error sending message: $e');
       
       if (mounted) {
-        // Remove the temporary message
         setState(() {
           _messages.removeWhere((m) => 
             m.id.startsWith('temp_') && 
@@ -272,7 +262,6 @@ class _ChatScreenState extends State<ChatScreen> {
             m.senderId == _currentUserId);
         });
         
-        // Show error message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to send message: $e'),
@@ -285,16 +274,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    print('[ChatScreen] build called');
     return Scaffold(
       backgroundColor: const Color(0xFFF0F7F5),
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: const Color(0xFFD0ECE8),
         elevation: 0,
         leadingWidth: 56,
         leading: IconButton(
           icon: const Icon(FontAwesomeIcons.arrowLeft, color: Color(0xC5000000)),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () {
+            Navigator.of(context).pop(true);
+          },
         ),
         title: Row(
           children: [
@@ -325,6 +315,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
+        
       ),
       body: Column(
         children: [
@@ -332,28 +323,20 @@ class _ChatScreenState extends State<ChatScreen> {
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _messages.isEmpty
-                    ? const Center(
+                    ? Center(
                         child: Text(
                           'No messages yet',
-                          style: TextStyle(
-                            color: Colors.black54,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0x80000000),
                             fontSize: 14,
                           ),
                         ),
                       )
-                    : NotificationListener<ScrollNotification>(
-                        onNotification: (ScrollNotification scrollInfo) {
-                          if (scrollInfo is ScrollEndNotification) {
-                            // Update scroll position when scrolling ends
-                            _scrollToBottom();
-                          }
-                          return true;
-                        },
-                        child: ListView.builder(
+                    : ListView.builder(
                           controller: _scrollController,
                           padding: const EdgeInsets.all(16),
                           itemCount: _messages.length,
-                          reverse: true, // This will make the list start from bottom
+                        reverse: true,
                           itemBuilder: (context, index) {
                             final message = _messages[_messages.length - 1 - index];
                             final isMe = message.senderId == _currentUserId;
@@ -364,39 +347,47 @@ class _ChatScreenState extends State<ChatScreen> {
                                 padding: const EdgeInsets.all(12),
                                 margin: const EdgeInsets.only(bottom: 8),
                                 decoration: BoxDecoration(
-                                  color: isMe ? const Color(0xFFD0ECE8) : const Color(0xFFF5F5F5),
+                                color: isMe ? const Color(0xFFD0ECE8) : Colors.white,
                                   borderRadius: BorderRadius.only(
                                     topLeft: const Radius.circular(16),
                                     topRight: const Radius.circular(16),
                                     bottomLeft: Radius.circular(isMe ? 16 : 0),
                                     bottomRight: Radius.circular(isMe ? 0 : 16),
                                   ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.05),
+                                    blurRadius: 5,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
                                 ),
                                 constraints: BoxConstraints(
                                   maxWidth: MediaQuery.of(context).size.width * 0.75,
                                 ),
                                 child: Text(
                                   message.content,
-                                  style: const TextStyle(
+                                style: GoogleFonts.poppins(
                                     fontSize: 14,
-                                    color: Colors.black87,
+                                  color: const Color(0xC5000000),
                                   ),
                                 ),
                               ),
                             );
                           },
-                        ),
                       ),
           ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border(
-                top: BorderSide(
-                  color: Colors.grey.withOpacity(0.2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, -2),
                 ),
-              ),
+              ],
             ),
             child: SafeArea(
               child: Row(
@@ -410,12 +401,16 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                       child: TextField(
                         controller: _messageController,
-                        decoration: const InputDecoration(
-                          hintText: 'Send Message',
-                          hintStyle: TextStyle(color: Colors.black54),
+                        decoration: InputDecoration(
+                          hintText: 'Type a message...',
+                          hintStyle: GoogleFonts.poppins(
+                            color: const Color(0x80000000),
+                            fontSize: 14,
+                          ),
                           border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(vertical: 10),
+                          contentPadding: const EdgeInsets.symmetric(vertical: 10),
                         ),
+                        onSubmitted: (_) => _sendMessage(),
                       ),
                     ),
                   ),

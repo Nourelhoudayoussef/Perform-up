@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class SupervisorService {
-  static String baseUrl = 'http://10.0.2.2:8080';
+  static String baseUrl = 'http://192.168.1.19:8080';
 
   Future<String?> _getToken() async {
     final prefs = await SharedPreferences.getInstance();

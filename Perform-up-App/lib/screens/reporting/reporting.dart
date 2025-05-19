@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'dart:io';
@@ -27,7 +29,7 @@ class _ReportingScreenState extends State<ReportingScreen> {
       _reportFilePath = null;
     });
     final formattedDate = DateFormat('yyyy-MM-dd').format(_selectedDate!);
-    final url = Uri.parse('http://10.0.2.2:8080/api/reports/daily?date=$formattedDate');
+    final url = Uri.parse('http://192.168.0.102:8080/api/reports/daily?date=$formattedDate');
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
@@ -135,7 +137,11 @@ class _ReportingScreenState extends State<ReportingScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Reports'),
+        title: Text('Reports',style: GoogleFonts.poppins(
+            fontSize: 20,
+            fontWeight: FontWeight.w500,
+            color: const Color(0xC5000000),
+          ),),
         backgroundColor: const Color(0xFFD0ECE8),
         elevation: 0,
         leading: IconButton(
@@ -143,9 +149,15 @@ class _ReportingScreenState extends State<ReportingScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_none),
-            onPressed: () {},
+          Container(
+            margin: const EdgeInsets.only(right: 16),
+            child: IconButton(
+              icon: const Icon(
+                FontAwesomeIcons.solidBell,
+                color: Color(0xC5000000),
+              ),
+              onPressed: () {},
+            ),
           ),
         ],
       ),

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../services/supervisor_service.dart';
+import '../../widgets/floating_ai_bubble.dart';
 
 class HomeSupervisorScreen extends StatefulWidget {
   const HomeSupervisorScreen({Key? key}) : super(key: key);
@@ -135,7 +136,7 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                     ),
                     child: DropdownButton<String>(
                       value: _selectedProductRef,
-                      hint: const Text('Product Ref'),
+                      hint: const Text('Ref'),
                       isExpanded: true,
                       underline: const SizedBox(),
                       items: _productRefs.map((ref) => DropdownMenuItem(value: ref, child: Text(ref))).toList(),
@@ -428,7 +429,7 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                                     color: Colors.black87,
                                   ),
                                   decoration: InputDecoration(
-                                    labelText: 'Defect Type',
+                                    labelText: 'Def-Type',
                                     labelStyle: GoogleFonts.poppins(
                                       fontSize: 14,
                                       color: Colors.black54,
@@ -483,10 +484,6 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
         actions: [
           Container(
             margin: const EdgeInsets.only(right: 16),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.5),
-              borderRadius: BorderRadius.circular(12),
-            ),
             child: IconButton(
               icon: const Icon(
                 FontAwesomeIcons.solidBell,
@@ -499,7 +496,9 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
           ),
         ],
       ),
-      body: _isLoading
+      body: Stack(
+        children: [
+          _isLoading
           ? const Center(child: CircularProgressIndicator(color: Color(0xFF6BBFB5)))
           : SingleChildScrollView(
               padding: const EdgeInsets.all(20),
@@ -511,13 +510,10 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                 ],
               ),
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.pushNamed(context, '/chatbot'),
-        icon: const Icon(Icons.smart_toy),
-        label: const Text('AI Help'),
-        backgroundColor: const Color(0xFF6BBFB5),
-        elevation: 4,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          FloatingAIBubble(
+            onTap: () => Navigator.pushNamed(context, '/chatbot'),
+          ),
+        ],
       ),
     );
   }

@@ -20,7 +20,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   bool isLoading = true;
   String searchQuery = "";
   Map<String, int> unreadCounts = {}; // Store unread counts for each chat
-  Map<String, String> lastMessages = {}; // Store last messages for each user
+  Map<String, dynamic> lastMessages = {}; // Store last messages for each user (now a map with content and timestamp)
   String? currentUserId; // Store current user ID
   Timer? _timer; // Timer to refresh unread counts
 
@@ -73,6 +73,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
           currentUserId!, 
           userIds
         );
+
+          // Sort users by last message timestamp (most recent first)
+          filteredUsers.sort((a, b) {
+            final aMsg = lastMessagesData[a['id'].toString()];
+            final bMsg = lastMessagesData[b['id'].toString()];
+            if (aMsg == null && bMsg == null) return 0;
+            if (aMsg == null) return 1;
+            if (bMsg == null) return -1;
+            final aTime = aMsg['timestamp'] != null ? DateTime.parse(aMsg['timestamp']) : DateTime.fromMillisecondsSinceEpoch(0);
+            final bTime = bMsg['timestamp'] != null ? DateTime.parse(bMsg['timestamp']) : DateTime.fromMillisecondsSinceEpoch(0);
+            return bTime.compareTo(aTime);
+          });
 
         if (mounted) {
           setState(() {
@@ -168,16 +180,21 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
+  String _formatTime(String isoString) {
+    final dateTime = DateTime.parse(isoString);
+    return "${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}";
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Color(0xFFF0F7F5),
       appBar: AppBar(
         backgroundColor: Color(0xFFD0ECE8),
-        elevation: 4.0,
+        elevation: 0,
         shadowColor: Colors.black.withOpacity(0.25),
-        toolbarHeight: 60,
-        leadingWidth: 56, // Default width of IconButton
+        //toolbarHeight: 60,
+        //leadingWidth: 56, // Default width of IconButton
         
         title: Padding(
           padding: EdgeInsets.only(left: 0), // Adjust the spacing here
@@ -190,9 +207,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ),
         ),
         actions: [
+          
           Padding(
-            padding: EdgeInsets.only(
-                right: 0), // Move the icon 16 pixels to the left
+            padding: EdgeInsets.only(right: 16),
             child: IconButton(
               icon: const Icon(FontAwesomeIcons.solidBell,
                   color: Color(0xC5000000)),
@@ -214,18 +231,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   child: TextField(
                     decoration: InputDecoration(
                       prefixIcon: Icon(FontAwesomeIcons.search,
-                          color: Color(0x39000000)),
+                          color: Color(0xFF9E9E9E)),
                       hintText: "Search by Name or Email..",
                       hintStyle: GoogleFonts.poppins(
                         fontSize: 14.0,
                         fontWeight: FontWeight.w500,
-                        color: Color(0x60000000),
+                        color: Color(0xFFB0B0B0),
                       ),
                       filled: true,
-                      fillColor: Color(0xFFF1F1F1),
-                      border: OutlineInputBorder(
+                      fillColor: Color(0xFFF5F5F5),
+                      contentPadding: EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+                      enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(25),
-                        borderSide: BorderSide.none,
+                        borderSide: BorderSide(color: Color(0xFFE0E0E0), width: 1),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(25),
+                        borderSide: BorderSide(color: Color(0xFFBDBDBD), width: 1.5),
                       ),
                     ),
                     onChanged: (value) {
@@ -251,7 +273,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
           Expanded(
             child: Container(
               decoration: const BoxDecoration(
-                color: Colors.white,
+                color: Color(0xFFF0F7F5),
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(25),
                   topRight: Radius.circular(25),
@@ -275,12 +297,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
                                 .contains(searchQuery)) {
                           return Container();
                         }
-                        // Get unread count for this user
                         final unreadCount = _getUnreadCount(user['id'].toString());
-                        print('User ${user['username']} (${user['id']}): unreadCount = $unreadCount');
                         
                         return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                          child: Card(
+                            color: Colors.white,
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
                           child: ListTile(
                             leading: CircleAvatar(
                               backgroundColor: getAvatarColor(user['username'].toString()[0]),
@@ -308,7 +334,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                               ),
                             ),
                             subtitle: Text(
-                              lastMessages[user['id'].toString()] ?? 'No messages yet',
+                                lastMessages[user['id'].toString()]?['content'] ?? 'No messages yet',
                               style: GoogleFonts.poppins(
                                 fontSize: 13.0,
                                 fontWeight: FontWeight.w400,
@@ -320,8 +346,21 @@ class _ChatListScreenState extends State<ChatListScreen> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            trailing: unreadCount > 0
-                              ? CircleAvatar(
+                              trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  if (lastMessages[user['id'].toString()]?['timestamp'] != null)
+                                    Text(
+                                      _formatTime(lastMessages[user['id'].toString()]!['timestamp']),
+                                      style: TextStyle(
+                                        color: Colors.grey[500],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  if (unreadCount > 0)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: CircleAvatar(
                                   radius: 10,
                                   backgroundColor: Color(0xFF6BBFB5),
                                   child: Text(
@@ -331,8 +370,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
                                       color: Colors.white,
                                     ),
                                   ),
-                                )
-                              : null,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             onTap: () async {
                               // Mark chat as read when user taps on it
                               if (currentUserId != null && unreadCount > 0) {
@@ -355,13 +396,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
                                   'username': user['username'].toString(),
                                   'profilePicture': user['profilePicture']?.toString(),
                                 },
-                              ).then((_) {
-                                // Refresh unread counts when returning from chat
-                                if (currentUserId != null) {
-                                  _loadUnreadCounts();
+                                ).then((shouldRefresh) {
+                                  // Refresh data if returning from chat screen
+                                  if (shouldRefresh == true) {
+                                    _loadData();
                                 }
                               });
                             },
+                            ),
                           ),
                         );
                       },
