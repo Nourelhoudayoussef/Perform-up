@@ -2,7 +2,7 @@ from flask import Flask, request
 from flask_cors import CORS
 from pymongo import MongoClient
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 import nltk
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
@@ -221,9 +221,88 @@ def analyze_question(text):
         'aggregation': None,
         'comparison': None,
         'math_operation': None,
-        'calculation_type': None
+        'calculation_type': None,
+        'defect_query_type': None  # New field to track defect query types
     }
     
+    # Detect defect query types first - this is important for specialized handling
+    defect_patterns = {
+        'defect_types': [
+            r'what\s+(are|is)\s+the\s+(type|kind)s?\s+of\s+defects',
+            r'defect\s+(types?|categories|classification)',
+            r'(list|show|get|find)\s+(all|me|the)?\s+defect\s+(types?|categories)',
+            r'what\s+(defect|quality issue)\s+(types?|categories|kinds?)',
+            r'(types?|categories|kinds?)\s+of\s+defects',
+        ],
+        'defect_names': [
+            r'(list|show|get|find)\s+(all|me|the)?\s+defect\s+names',
+            r'what\s+(are|is)\s+the\s+names?\s+of\s+defects',
+            r'defect\s+names',
+            r'names\s+of\s+defects',
+        ],
+        'defect_statistics': [
+            r'(statistics|stats|metrics|analytics|numbers|figures)\s+of\s+defects',
+            r'defect\s+(statistics|stats|metrics|analytics|numbers|figures)',
+            r'(summarize|analyze)\s+defects',
+            r'defect\s+(count|summary|analysis|overview)',
+            r'(how\s+many|number\s+of)\s+defects',
+        ],
+        'defect_distribution': [
+            r'(distribution|spread|breakdown)\s+of\s+defects',
+            r'defect\s+(distribution|spread|breakdown|by\s+type)',
+            r'(most\s+common|frequent)\s+defects?',
+            r'(group|categorize)\s+defects',
+            r'defects?\s+by\s+(type|category|workshop|date)'
+        ],
+        'defect_trend': [
+            r'defect\s+(trend|pattern|evolution|progress|development)',
+            r'(trend|pattern|evolution|progress|development)\s+of\s+defects',
+            r'(change|increase|decrease|improvement)\s+in\s+defects',
+            r'defects?\s+(over\s+time|compared)',
+            r'how\s+are\s+defects\s+(changing|evolving|developing)'
+        ],
+        'specific_defect': [
+            r'(show|find|get|how\s+many|number\s+of)\s+(\w+)\s+defects',
+            r'defects?\s+of\s+type\s+(\w+)',
+            r'(\w+)\s+(defects?|quality\s+issues?)',
+            r'information\s+(about|on)\s+(\w+)\s+defects?'
+    ]
+    }
+    
+    # Check for defect query patterns
+    for query_type, patterns in defect_patterns.items():
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                analysis['metrics'].add('defects')
+                analysis['defect_query_type'] = query_type
+                # For specific defect type queries, extract the defect type
+                if query_type == 'specific_defect' and len(match.groups()) > 1:
+                    defect_type = match.group(2)
+                    if defect_type and defect_type.lower() not in ['all', 'any', 'these', 'those', 'the']:
+                        analysis['filters']['defect_type'] = defect_type
+                # Set appropriate math operation based on query type
+                if query_type == 'defect_statistics':
+                    analysis['math_operation'] = 'sum'
+                elif query_type == 'defect_distribution':
+                    analysis['math_operation'] = 'distribution'
+                elif query_type == 'defect_trend':
+                    analysis['math_operation'] = 'trend'
+                print(f"Detected defect query type: {query_type}")
+                if 'defect_type' in analysis['filters']:
+                    print(f"Specific defect type: {analysis['filters']['defect_type']}")
+                break
+        
+        # If we found a match, no need to check other patterns
+        if analysis['defect_query_type']:
+            break
+    
+    # If we detect "defects" but no specific query type, set a default
+    if 'defects' in analysis['metrics'] and not analysis['defect_query_type']:
+        analysis['defect_query_type'] = 'defect_statistics'
+        analysis['math_operation'] = 'sum'
+        print("Setting default defect query type to statistics")
+            
     # Detect intent for machine failures specifically
     failure_patterns = [
         r'(machine|equipment)\s+(failures?|breakdowns?|issues?|problems?)',
@@ -432,12 +511,13 @@ def analyze_question(text):
     
     # Extract metrics using generic patterns
     metric_patterns = {
-        'production': r'production|output|produced|units|quantity',
-        'defects': r'defects?|errors?|quality issues?',
-        'efficiency': r'efficiency|performance|productivity',
-        'failures': r'failures?|breakdowns?|maintenance|repairs?',
-        'target': r'target|goal|objective',
-        'variance': r'variance|deviation|difference'
+        'production': r'production|output|produced|units|quantity|manufactured',
+        'performance': r'performance|efficiency|productivity|yield|production',
+        'defects': r'defects?|errors?|quality issues?|reject|faulty',
+        'efficiency': r'efficiency|performance|productivity|yield',
+        'failures': r'failures?|breakdowns?|maintenance|repairs?|malfunction',
+        'target': r'target|goal|objective|plan',
+        'variance': r'variance|deviation|difference|gap'
     }
     
     # Check for general keywords related to each metric
@@ -447,11 +527,12 @@ def analyze_question(text):
     
     # Extract filters using generic patterns
     filter_patterns = {
-        'workshop': r'workshop\s*(\d+)',
-        'machine': r'machine\s+(?:id|reference|ref|number)?\s*([a-zA-Z0-9\-]+)',  # More specific machine pattern
-        'technician': r'(?:technician|handled by|fixed by|repaired by)\s+([^\s,.?!][^,.?!]*)',
-        'order': r'order\s*(?:reference|ref)?\s*#?\s*(\d+)',
-        'chain': r'chain\s*([a-zA-Z0-9\-]+)'
+        'workshop': r'workshop\s*(\d+)|(\d+)\s*(?:st|nd|rd|th)?\s*workshop|work\s*shop\s*(\d+)',
+        'machine': r'machine\s+(?:id|reference|ref|number)?\s*([a-zA-Z0-9\-]+)|([a-zA-Z0-9\-]+)\s*machine',
+        'technician': r'(?:technician|handled by|fixed by|repaired by|engineer)\s+([^\s,.?!][^,.?!]*)',
+        'order': r'order\s*(?:reference|ref)?\s*#?\s*(\d+)|order\s*(?:number|num|no)\s*#?\s*(\d+)',
+        'chain': r'chain\s*(\d+)|chain\s*([a-zA-Z0-9\-]+)|(\d+)\s*(?:st|nd|rd|th)?\s*chain',
+        'hour': r'(?:at|during|hour)\s*(\d{1,2})(?:\s*(?:am|pm|h|hour|:00))?|(\d{1,2})\s*(?:am|pm|h|hour|o\'clock)'
     }
     
     # Check for workshop mentions in comparison contexts
@@ -1162,6 +1243,11 @@ def format_response(data, analysis):
     if not data:
         if 'failures' in analysis['metrics']:
             return "No machine failures found matching your criteria."
+            
+        if 'defects' in analysis['metrics']:
+            if 'defect_type' in analysis['filters']:
+                return f"No defect data found for type '{analysis['filters']['defect_type']}'. Please check the defect type or try a different query."
+            return "No defect data found matching your criteria."
         
         # For order reference, give more specific message
         if 'order' in analysis['filters']:
@@ -1170,6 +1256,44 @@ def format_response(data, analysis):
         return "No data found matching your criteria."
     
     response_parts = []
+    
+    # Handle defects specifically
+    if 'defects' in analysis['metrics'] and analysis.get('defect_query_type'):
+        defect_query_type = analysis.get('defect_query_type')
+        
+        # Handle defect query types in different ways
+        if defect_query_type == 'defect_statistics':
+            total_records = len(data)
+            total_defects = sum(safe_get_numeric(d, ['defects', 'qualityIssues', 'defect_count', 'defectCount']) for d in data)
+            response_parts.append(f"Found {total_records} records with defect data")
+            response_parts.append(f"Total defects: {total_defects:.0f}")
+            
+            # Check for workshop filter
+            if 'workshop' in analysis['filters']:
+                workshop = analysis['filters']['workshop']
+                response_parts.append(f"Workshop: {workshop}")
+            
+            # Check for date info
+            if analysis['date_info']:
+                date_info = analysis['date_info']
+                if date_info['type'] == 'exact_date':
+                    response_parts.append(f"Date: {date_info['value']}")
+                elif date_info['type'] == 'relative_date':
+                    if isinstance(date_info['value'], dict):
+                        response_parts.append(f"Date range: {date_info['value']['start']} to {date_info['value']['end']}")
+                    else:
+                        response_parts.append(f"Date: {date_info['value']}")
+            
+            # Add defect density/rate if we can calculate it
+            total_production = sum(safe_get_numeric(d, ['produced', 'production', 'producedCount', 'totalProduction']) for d in data)
+            if total_production > 0:
+                defect_rate = (total_defects / total_production) * 100
+                response_parts.append(f"Defect rate: {defect_rate:.2f}%")
+                response_parts.append(f"Total production: {total_production:.0f} units")
+        
+        # For other defect query types, just use the default handling
+        
+        return " | ".join(response_parts)
     
     # Handle machine failures specifically
     if 'failures' in analysis['metrics']:
@@ -1404,6 +1528,30 @@ def query_database(analysis):
             print("Successfully reconnected to MongoDB!")
         else:
             return "Database connection is currently unavailable. Please try again later. Check your network connection and MongoDB Atlas settings."
+    
+    # Handle special cases for defect-related queries
+    if 'defects' in analysis['metrics'] and analysis['defect_query_type']:
+        defect_query_type = analysis['defect_query_type']
+        
+        # Handle defect type listing specifically
+        if defect_query_type == 'defect_types':
+            return get_defect_types()
+            
+        # Handle defect names listing specifically
+        elif defect_query_type == 'defect_names':
+            return get_defect_names()
+            
+        # Handle defect distribution 
+        elif defect_query_type == 'defect_distribution':
+            return get_defect_distribution(analysis)
+            
+        # Handle specific defect type queries
+        elif defect_query_type == 'specific_defect' and 'defect_type' in analysis['filters']:
+            return get_specific_defect_info(analysis)
+    
+    # Handle performance/production related queries
+    if 'performance' in analysis['metrics'] or 'production' in analysis['metrics'] or ('defects' in analysis['metrics'] and not analysis['defect_query_type']):
+        return get_performance_data(analysis)
     
     # Handle special case for workshop comparison
     if analysis['calculation_type'] == 'comparison' and analysis['comparison'].get('entity_type') == 'workshop':
@@ -1784,7 +1932,9 @@ def safe_get_numeric(record, field_names, default=0):
     for field in field_names:
         if field in record:
             try:
-                return float(record[field])
+                value = record[field]
+                if value is not None:
+                    return float(value)
             except (ValueError, TypeError):
                 continue
     return default
@@ -1805,16 +1955,19 @@ def chatbot():
     if mongodb_available and db is not None:
         try:
             # Create a document with the conversation data
+            current_time = datetime.now(UTC)
+            print(f"Saving conversation for user {user_id} at {current_time.isoformat()}")
+            
             conversation_doc = {
                 "user_id": user_id,
                 "question": message,
                 "response": response,
-                "timestamp": datetime.utcnow()
+                "timestamp": current_time  # Use the same datetime object
             }
             
             # Insert into the chatbot_conversations collection
-            db.chatbot_conversations.insert_one(conversation_doc)
-            print(f"Saved chatbot conversation for user {user_id}")
+            result = db.chatbot_conversations.insert_one(conversation_doc)
+            print(f"Saved chatbot conversation for user {user_id}, id: {result.inserted_id}")
         except Exception as e:
             print(f"Error saving chatbot conversation: {str(e)}")
     
@@ -1916,26 +2069,1373 @@ def get_conversation_history(user_id):
         return {"status": "error", "message": "Database connection unavailable"}
     
     try:
-        # Query the chatbot_conversations collection for this user
+        print(f"Fetching chat history for user: {user_id}")
+        
+        # Use a simpler query without date filtering to ensure all records are returned
         conversations = list(db.chatbot_conversations.find(
             {"user_id": user_id},
             {"_id": 0}  # Exclude MongoDB _id field from results
         ).sort("timestamp", -1).limit(50))  # Get latest 50 conversations
         
+        print(f"Found {len(conversations)} conversations")
+        if conversations:
+            print(f"Most recent conversation timestamp: {conversations[0].get('timestamp', 'unknown')}")
+            print(f"First question: {conversations[0].get('question', 'unknown')}")
+        
         # Convert datetime objects to string for JSON serialization
+        current_time = datetime.now(UTC)
+        print(f"Current UTC time: {current_time.isoformat()}")
+        
         for conv in conversations:
             if "timestamp" in conv and isinstance(conv["timestamp"], datetime):
-                conv["timestamp"] = conv["timestamp"].isoformat()
+                # Ensure timestamp is in ISO format with timezone info
+                conv["timestamp"] = conv["timestamp"].replace(microsecond=0).isoformat() + 'Z'
+                
+        # Log some sample data for debugging
+        if conversations:
+            print(f"Formatted timestamp of latest: {conversations[0].get('timestamp', 'unknown')}")
         
         return {
             "status": "success", 
             "conversations": conversations,
-            "count": len(conversations)
+            "count": len(conversations),
+            "server_time": current_time.replace(microsecond=0).isoformat() + 'Z'
         }
     
     except Exception as e:
         print(f"Error fetching conversation history: {str(e)}")
         return {"status": "error", "message": f"Failed to fetch conversation history: {str(e)}"}
+
+def get_defect_types():
+    """Query the database to get all defect types"""
+    if not mongodb_available:
+        return "Database connection is unavailable. Cannot retrieve defect types."
+    
+    try:
+        # First try to get defect types from a dedicated collection if it exists
+        defect_types = []
+        
+        if 'defect_types' in available_collections:
+            # Try to get types from dedicated collection
+            types_docs = list(db.defect_types.find())
+            if types_docs:
+                for doc in types_docs:
+                    # Look for fields that might contain the type name
+                    for field in ['name', 'type', 'defectType', 'category']:
+                        if field in doc and doc[field]:
+                            defect_types.append(str(doc[field]))
+                            break
+        
+        # If no dedicated collection or no types found, try to extract from defect records
+        if not defect_types:
+            # Try to identify collections that might contain defect data
+            defect_collections = [coll for coll in available_collections 
+                                if any(kw in coll.lower() for kw in ['defect', 'quality', 'production'])]
+            
+            if not defect_collections:
+                defect_collections = ['performance3', 'monthly_performance']  # fallback to known collections
+            
+            # Search for defect type fields in each collection
+            extracted_types = set()
+            for coll_name in defect_collections:
+                try:
+                    # Find a sample document to identify field structure
+                    sample = db[coll_name].find_one()
+                    if not sample:
+                        continue
+                    
+                    # Look for fields that might contain defect type information
+                    type_fields = []
+                    for field in sample.keys():
+                        if any(kw in field.lower() for kw in ['defect_type', 'defecttype', 'type', 'category']):
+                            type_fields.append(field)
+                    
+                    # If we found potential fields, query for distinct values
+                    if type_fields:
+                        for field in type_fields:
+                            distinct_values = db[coll_name].distinct(field)
+                            for value in distinct_values:
+                                if value and isinstance(value, (str, int)):
+                                    extracted_types.add(str(value))
+                except Exception as e:
+                    print(f"Error extracting defect types from {coll_name}: {e}")
+                    continue
+            
+            # If we found types via extraction, use them
+            if extracted_types:
+                defect_types = list(extracted_types)
+        
+        # If still no defect types found, fall back to extracting from text fields
+        if not defect_types:
+            # Look in text description fields 
+            text_field_patterns = [
+                ('description', r'type:\s*(\w+)'), 
+                ('notes', r'defect:\s*(\w+)'),
+                ('comment', r'issue:\s*(\w+)')
+            ]
+            
+            # Search in likely collections
+            extracted_types = set()
+            for coll_name in defect_collections:
+                try:
+                    # Find documents with text fields
+                    for field_name, pattern in text_field_patterns:
+                        docs = list(db[coll_name].find({field_name: {"$exists": True}}).limit(50))
+                        for doc in docs:
+                            if field_name in doc and isinstance(doc[field_name], str):
+                                matches = re.findall(pattern, doc[field_name], re.IGNORECASE)
+                                for match in matches:
+                                    extracted_types.add(match)
+                except Exception:
+                    continue
+            
+            # Add any types from extraction
+            if extracted_types:
+                defect_types.extend(list(extracted_types))
+        
+        # We won't look for hardcoded patterns anymore
+        # Just rely on what we find in the database
+        
+        # If we still have no types found in the database
+        if not defect_types:
+            return "No defect types found in the database. Please check if defect type data is properly stored."
+        
+        # If we only have numeric IDs, leave them as is without adding descriptive names
+        # This ensures we're only using what's in the database without any hardcoded assumptions
+        
+        # Format and return the response
+        if defect_types:
+            # Remove duplicates and sort
+            unique_types = sorted(list(set(defect_types)))
+            
+            # Check if we only have numeric values
+            all_numeric = all(isinstance(t, (int, float)) or (isinstance(t, str) and t.isdigit()) for t in unique_types)
+            
+            # We won't add hardcoded descriptions, but we will try to find name fields in the database
+            if all_numeric and 'defect_types' in available_collections:
+                print("Found only numeric defect type IDs, looking for name fields in database")
+                
+                # Try to find descriptive fields that might contain names
+                name_to_id_map = {}
+                try:
+                    # Look for documents that have both a numeric ID and a text field
+                    for doc_id in unique_types:
+                        # Look for a document with this ID
+                        potential_docs = list(db.defect_types.find({"$or": [
+                            {"_id": doc_id}, 
+                            {"id": doc_id}, 
+                            {"defectId": doc_id}, 
+                            {"defect_id": doc_id}
+                        ]}))
+                        
+                        if potential_docs:
+                            # Found a matching document, look for text fields
+                            doc = potential_docs[0]
+                            for field, value in doc.items():
+                                if field not in ["_id", "id", "defectId", "defect_id"] and isinstance(value, str) and not value.isdigit():
+                                    name_to_id_map[doc_id] = value
+                                    print(f"Found mapping: ID {doc_id} -> Name '{value}' in field '{field}'")
+                                    break
+                            
+                    # If we found mappings, use them to enhance the response
+                    if name_to_id_map:
+                        # Replace IDs with ID+Name format
+                        enhanced_types = []
+                        for type_id in unique_types:
+                            if type_id in name_to_id_map:
+                                enhanced_types.append(f"{type_id} ({name_to_id_map[type_id]})")
+                            else:
+                                enhanced_types.append(str(type_id))
+                                
+                        unique_types = enhanced_types
+                        print(f"Enhanced type IDs with names: {unique_types}")
+                except Exception as e:
+                    print(f"Error trying to find defect type names: {e}")
+                    # Continue with just the IDs
+            
+            # Format the response with the types
+            response = f"Found {len(unique_types)} defect types: "
+            response += ", ".join(str(t) for t in unique_types)
+            return response
+        else:
+            return "No defect types found in the database."
+    
+    except Exception as e:
+        print(f"Error retrieving defect types: {e}")
+        return f"Error retrieving defect types: {str(e)}"
+
+def get_defect_names():
+    """Query the database to get all defect names"""
+    if not mongodb_available:
+        return "Database connection is unavailable. Cannot retrieve defect names."
+    
+    try:
+        # First try to get defect names from a dedicated collection if it exists
+        defect_names = []
+        
+        if 'defect_types' in available_collections:
+            # Try to get names from dedicated collection
+            types_docs = list(db.defect_types.find())
+            if types_docs:
+                for doc in types_docs:
+                    # Look for fields that might contain the name (prioritize name fields)
+                    for field in ['name', 'defectName', 'description', 'label']:
+                        if field in doc and doc[field]:
+                            defect_names.append(str(doc[field]))
+                            break
+        
+        # If no names found yet, look for mappings of IDs to names
+        if not defect_names and 'defect_types' in available_collections:
+            types_docs = list(db.defect_types.find())
+            id_name_pairs = []
+            
+            for doc in types_docs:
+                defect_id = None
+                defect_name = None
+                
+                # First, get the ID
+                for id_field in ['_id', 'id', 'defectId', 'defect_id']:
+                    if id_field in doc and doc[id_field] is not None:
+                        defect_id = str(doc[id_field])
+                        break
+                
+                # Then, get the name
+                for name_field in ['name', 'defectName', 'description', 'label']:
+                    if name_field in doc and doc[name_field] is not None:
+                        defect_name = str(doc[name_field])
+                        break
+                
+                # If we have both an ID and a name, add to our list
+                if defect_id and defect_name and defect_id != defect_name:
+                    id_name_pairs.append(f"{defect_name}")
+            
+            if id_name_pairs:
+                defect_names.extend(id_name_pairs)
+        
+        # If still no defect names found, try other collections
+        if not defect_names:
+            # Try to identify collections that might contain defect data
+            defect_collections = [coll for coll in available_collections 
+                                if any(kw in coll.lower() for kw in ['defect', 'quality', 'defect_names'])]
+            
+            if not defect_collections:
+                defect_collections = ['performance3', 'monthly_performance']  # fallback to known collections
+            
+            # Look for fields that might contain defect name information
+            for coll_name in defect_collections:
+                try:
+                    sample = db[coll_name].find_one()
+                    if not sample:
+                        continue
+                    
+                    name_fields = []
+                    for field in sample.keys():
+                        if any(kw in field.lower() for kw in ['defect_name', 'defectname', 'name', 'description']):
+                            name_fields.append(field)
+                    
+                    if name_fields:
+                        for field in name_fields:
+                            distinct_values = db[coll_name].distinct(field)
+                            for value in distinct_values:
+                                if value and isinstance(value, str) and value.strip():
+                                    defect_names.append(value)
+                except Exception as e:
+                    print(f"Error extracting defect names from {coll_name}: {e}")
+                    continue
+        
+        # If we still have no names found in the database, try to get the defect types and convert
+        if not defect_names:
+            # Get defect types
+            defect_types = []
+            
+            if 'defect_types' in available_collections:
+                # Try to extract name-id mappings from defect_types collection
+                name_mappings = {}
+                all_docs = list(db.defect_types.find())
+                
+                for doc in all_docs:
+                    type_id = None
+                    for id_field in ['_id', 'id', 'defectId', 'type', 'defectType']:
+                        if id_field in doc and doc[id_field] is not None:
+                            type_id = str(doc[id_field])
+                            break
+                    
+                    if type_id:
+                        name = None
+                        for name_field in ['name', 'defectName', 'description', 'label']:
+                            if name_field in doc and doc[name_field] is not None and isinstance(doc[name_field], str):
+                                name = doc[name_field]
+                                break
+                        
+                        if name:
+                            name_mappings[type_id] = name
+                            defect_names.append(name)
+        
+        # Format and return the response
+        if defect_names:
+            # Remove duplicates and sort
+            unique_names = sorted(list(set(defect_names)))
+            
+            # Format the response with the names
+            response = f"Found {len(unique_names)} defect names: "
+            response += ", ".join(str(name) for name in unique_names)
+            return response
+        else:
+            return "No defect names found in the database. The system may only have defect type IDs without descriptive names."
+    
+    except Exception as e:
+        print(f"Error retrieving defect names: {e}")
+        return f"Error retrieving defect names: {str(e)}"
+
+def get_defect_distribution(analysis):
+    """Get the distribution of defects by type, workshop, etc."""
+    if not mongodb_available:
+        return "Database connection is unavailable. Cannot retrieve defect distribution."
+    
+    try:
+        # Determine which collections to query
+        defect_collections = [coll for coll in available_collections 
+                            if any(kw in coll.lower() for kw in ['defect', 'quality', 'production'])]
+        
+        if not defect_collections:
+            defect_collections = ['performance3', 'monthly_performance']  # fallback
+        
+        # Build the query based on date and other filters
+        query = build_mongodb_query(analysis)
+        
+        # Initialize counters
+        defect_counts = {}  # Defects by type
+        workshop_defects = {}  # Defects by workshop
+        date_defects = {}  # Defects by date
+        
+        # Track field names that contain defect information
+        defect_fields = {
+            'count': [],  # Fields that contain defect counts
+            'type': []    # Fields that contain defect types
+        }
+        
+        # For each collection, try to extract defect distribution
+        data_found = False
+        for coll_name in defect_collections:
+            try:
+                # Get a sample to identify fields
+                sample = db[coll_name].find_one()
+                if not sample:
+                    continue
+                
+                # Identify defect-related fields
+                for field in sample.keys():
+                    field_lower = field.lower()
+                    if 'defect' in field_lower or 'quality' in field_lower:
+                        if any(kw in field_lower for kw in ['count', 'number', 'total']):
+                            defect_fields['count'].append(field)
+                        elif any(kw in field_lower for kw in ['type', 'category', 'kind']):
+                            defect_fields['type'].append(field)
+                
+                # If we don't have specific defect count fields, look for general fields
+                if not defect_fields['count']:
+                    for field in sample.keys():
+                        if field == 'defects' or field == 'qualityIssues':
+                            defect_fields['count'].append(field)
+                
+                # Query the database
+                documents = list(db[coll_name].find(query).limit(100))
+                
+                if documents:
+                    data_found = True
+                    
+                    # Process each document
+                    for doc in documents:
+                        # Get the workshop id (try various field names)
+                        workshop = None
+                        for w_field in ['workshop', 'workshopId', 'workshop_id']:
+                            if w_field in doc:
+                                workshop = str(doc[w_field])
+                                break
+                        
+                        # Get the date
+                        date = doc.get('date', 'unknown')
+                        if isinstance(date, str):
+                            # Use just the date part if it includes time
+                            date_parts = date.split('T')[0] if 'T' in date else date
+                        else:
+                            date_parts = str(date)
+                        
+                        # If we have a type field, use it to distribute defects by type
+                        defect_type_found = False
+                        for type_field in defect_fields['type']:
+                            if type_field in doc and doc[type_field]:
+                                defect_type = str(doc[type_field])
+                                defect_count = 1  # Default count if no count field
+                                
+                                # Look for a corresponding count field
+                                for count_field in defect_fields['count']:
+                                    if count_field in doc and doc[count_field] is not None:
+                                        try:
+                                            defect_count = float(doc[count_field])
+                                            break
+                                        except (ValueError, TypeError):
+                                            pass
+                                
+                                # Update the counters
+                                defect_counts[defect_type] = defect_counts.get(defect_type, 0) + defect_count
+                                defect_type_found = True
+                                
+                                # Update workshop distribution if workshop exists
+                                if workshop:
+                                    if workshop not in workshop_defects:
+                                        workshop_defects[workshop] = {}
+                                    workshop_defects[workshop][defect_type] = workshop_defects[workshop].get(defect_type, 0) + defect_count
+                                
+                                # Update date distribution
+                                if date_parts not in date_defects:
+                                    date_defects[date_parts] = {}
+                                date_defects[date_parts][defect_type] = date_defects[date_parts].get(defect_type, 0) + defect_count
+                        
+                        # If no specific defect type found, just count total defects
+                        if not defect_type_found:
+                            total_defects = 0
+                            for count_field in defect_fields['count']:
+                                if count_field in doc and doc[count_field] is not None:
+                                    try:
+                                        total_defects = float(doc[count_field])
+                                        break
+                                    except (ValueError, TypeError):
+                                        pass
+                            
+                            if total_defects > 0:
+                                defect_type = "Unspecified"
+                                defect_counts[defect_type] = defect_counts.get(defect_type, 0) + total_defects
+                                
+                                # Update workshop distribution if workshop exists
+                                if workshop:
+                                    if workshop not in workshop_defects:
+                                        workshop_defects[workshop] = {}
+                                    workshop_defects[workshop][defect_type] = workshop_defects[workshop].get(defect_type, 0) + total_defects
+                                
+                                # Update date distribution
+                                if date_parts not in date_defects:
+                                    date_defects[date_parts] = {}
+                                date_defects[date_parts][defect_type] = date_defects[date_parts].get(defect_type, 0) + total_defects
+            except Exception as e:
+                print(f"Error processing defect distribution in {coll_name}: {e}")
+                continue
+        
+        if not data_found:
+            return "No defect data found that matches your query criteria."
+        
+        # Format the response
+        response_parts = []
+        
+        # Overall distribution by type
+        if defect_counts:
+            total_defects = sum(defect_counts.values())
+            response_parts.append(f"Total defects: {total_defects:.0f}")
+            
+            response_parts.append("Defect distribution by type:")
+            type_lines = []
+            for defect_type, count in sorted(defect_counts.items(), key=lambda x: x[1], reverse=True):
+                percentage = (count / total_defects) * 100 if total_defects > 0 else 0
+                type_lines.append(f"{defect_type}: {count:.0f} ({percentage:.1f}%)")
+            response_parts.append(" | ".join(type_lines[:5]))  # Show top 5
+        
+        # Distribution by workshop
+        if workshop_defects:
+            response_parts.append("Defect distribution by workshop:")
+            workshop_lines = []
+            for workshop, defects in workshop_defects.items():
+                workshop_total = sum(defects.values())
+                workshop_lines.append(f"Workshop {workshop}: {workshop_total:.0f} defects")
+            response_parts.append(" | ".join(workshop_lines[:5]))  # Show top 5
+        
+        # Date trend (optional, only if requested)
+        if date_defects and len(date_defects) > 1 and analysis.get('math_operation') == 'trend':
+            response_parts.append("Defect trend:")
+            date_totals = {date: sum(defects.values()) for date, defects in date_defects.items()}
+            # Sort by date
+            date_trend = sorted(date_totals.items())
+            trend_lines = []
+            for date, total in date_trend[:5]:  # Show most recent 5
+                trend_lines.append(f"{date}: {total:.0f}")
+            response_parts.append(" | ".join(trend_lines))
+        
+        return " ▪ ".join(response_parts)
+    
+    except Exception as e:
+        print(f"Error analyzing defect distribution: {e}")
+        return f"Error analyzing defect distribution: {str(e)}"
+
+def get_specific_defect_info(analysis):
+    """Get information about a specific defect type"""
+    if not mongodb_available:
+        return "Database connection is unavailable. Cannot retrieve defect information."
+    
+    try:
+        # Get the specific defect type from filters
+        defect_type = analysis['filters'].get('defect_type')
+        if not defect_type:
+            return "No specific defect type specified."
+            
+        # Check if user is asking about "defect" in general rather than a specific type
+        if defect_type.lower() == "defect" or defect_type.lower() == "defects":
+            print("User is asking about defects in general")
+            
+            # Check if the original query was about types or names
+            if 'defect_names' in str(analysis).lower():
+                return get_defect_names()
+            else:
+                return get_defect_types()
+        
+        # Make the defect type case-insensitive
+        defect_pattern = re.compile(defect_type, re.IGNORECASE)
+        
+        # Determine which collections to query
+        defect_collections = [coll for coll in available_collections 
+                             if any(kw in coll.lower() for kw in ['defect', 'quality', 'production'])]
+        
+        if not defect_collections:
+            defect_collections = ['performance3', 'monthly_performance']  # fallback
+        
+        # Build the base query for date and other filters
+        query = build_mongodb_query(analysis)
+        
+        # Add defect type filter with case-insensitive matching
+        # We'll need to check various possible field names
+        defect_type_query = {"$or": []}
+        
+        # Track found data and field information
+        total_count = 0
+        workshop_counts = {}
+        date_counts = {}
+        
+        # For each collection, try to find data for this defect type
+        data_found = False
+        defect_fields = set()  # Track which fields contained defect data
+        
+        for coll_name in defect_collections:
+            try:
+                # Get a sample document to identify field structure
+                sample = db[coll_name].find_one()
+                if not sample:
+                    continue
+                
+                # Look for fields that might contain defect type information
+                type_fields = []
+                for field in sample.keys():
+                    field_lower = field.lower()
+                    if any(kw in field_lower for kw in ['defect_type', 'defecttype', 'type', 'category']):
+                        type_fields.append(field)
+                
+                # If no specific type fields found, look for count fields that might have the defect type in name
+                count_fields = []
+                type_in_count_field = False
+                
+                for field in sample.keys():
+                    field_lower = field.lower()
+                    if any(kw in field_lower for kw in ['defect', 'quality']):
+                        # Check if the field name contains the defect type
+                        if defect_pattern.search(field_lower):
+                            count_fields.append(field)
+                            type_in_count_field = True
+                
+                if type_fields:
+                    # Build a query using the type fields
+                    for field in type_fields:
+                        defect_type_query["$or"].append({field: {"$regex": defect_type, "$options": "i"}})
+                
+                if type_in_count_field:
+                    # Use the count fields directly
+                    count_query = {"$or": []}
+                    for field in count_fields:
+                        count_query["$or"].append({field: {"$exists": True}})
+                    
+                    # Either use a combined query or just the count query
+                    if defect_type_query["$or"]:
+                        # If we have both type fields and count fields, use them in an OR
+                        final_query = {"$or": [defect_type_query, count_query]}
+                    else:
+                        final_query = count_query
+                else:
+                    # Just use the type query if no count fields match the defect type
+                    final_query = defect_type_query if defect_type_query["$or"] else {}
+                
+                # Combine with the base query
+                if query and final_query:
+                    combined_query = {"$and": [query, final_query]}
+                else:
+                    combined_query = query or final_query or {}
+                
+                # Query the database
+                print(f"Querying {coll_name} for {defect_type} with query: {combined_query}")
+                documents = list(db[coll_name].find(combined_query).limit(100))
+                
+                if documents:
+                    data_found = True
+                    print(f"Found {len(documents)} documents with {defect_type} in {coll_name}")
+                    
+                    # Process each document
+                    for doc in documents:
+                        # Track which fields contained defect information
+                        defect_count = 0
+                        
+                        # Check type fields first
+                        for field in type_fields:
+                            if field in doc and defect_pattern.search(str(doc[field])):
+                                # Found the defect type, now look for a corresponding count field
+                                for count_field in sample.keys():
+                                    if 'defect' in count_field.lower() and 'count' in count_field.lower():
+                                        if count_field in doc and doc[count_field] is not None:
+                                            try:
+                                                defect_count = float(doc[count_field])
+                                                defect_fields.add(f"{field} + {count_field}")
+                                                break
+                                            except (ValueError, TypeError):
+                                                pass
+                        
+                        # If no count found yet, check for fields that have the defect type in the name
+                        if defect_count == 0:
+                            for field in count_fields:
+                                if field in doc and doc[field] is not None:
+                                    try:
+                                        defect_count = float(doc[field])
+                                        defect_fields.add(field)
+                                        break
+                                    except (ValueError, TypeError):
+                                        pass
+                        
+                        # If still no count, check if there's a field just called 'defects'
+                        if defect_count == 0 and 'defects' in doc and doc['defects'] is not None:
+                            try:
+                                defect_count = float(doc['defects'])
+                                defect_fields.add('defects')
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        # If we found a count, update our totals
+                        if defect_count > 0:
+                            total_count += defect_count
+                            
+                            # Get the workshop (if available)
+                            workshop = None
+                            for w_field in ['workshop', 'workshopId', 'workshop_id']:
+                                if w_field in doc:
+                                    workshop = str(doc[w_field])
+                                    break
+                            
+                            if workshop:
+                                workshop_counts[workshop] = workshop_counts.get(workshop, 0) + defect_count
+                            
+                            # Get the date
+                            date = doc.get('date', 'unknown')
+                            if isinstance(date, str):
+                                # Use just the date part if it includes time
+                                date_parts = date.split('T')[0] if 'T' in date else date
+                            else:
+                                date_parts = str(date)
+                            
+                            date_counts[date_parts] = date_counts.get(date_parts, 0) + defect_count
+            except Exception as e:
+                print(f"Error processing {defect_type} in {coll_name}: {e}")
+                continue
+        
+        if not data_found:
+            return f"No data found for defect type '{defect_type}'. Try a different type or check spelling."
+        
+        # Format the response
+        response_parts = []
+        response_parts.append(f"Defect Information: {defect_type.title()}")
+        response_parts.append(f"Total count: {total_count:.0f}")
+        
+        # Workshop distribution
+        if workshop_counts:
+            response_parts.append("Distribution by workshop:")
+            workshop_lines = []
+            for workshop, count in sorted(workshop_counts.items(), key=lambda x: x[1], reverse=True):
+                percentage = (count / total_count) * 100 if total_count > 0 else 0
+                workshop_lines.append(f"Workshop {workshop}: {count:.0f} ({percentage:.1f}%)")
+            response_parts.append(" | ".join(workshop_lines[:5]))  # Show top 5
+        
+        # Date trend
+        if date_counts and len(date_counts) > 1:
+            response_parts.append("Recent trend:")
+            # Sort by date
+            dates = sorted(date_counts.keys())[-5:]  # Most recent 5 dates
+            trend_lines = []
+            for date in dates:
+                count = date_counts[date]
+                trend_lines.append(f"{date}: {count:.0f}")
+            response_parts.append(" | ".join(trend_lines))
+        
+        # Fields that were used
+        if defect_fields:
+            field_str = ", ".join(defect_fields)
+            response_parts.append(f"Data source fields: {field_str}")
+        
+        return " ▪ ".join(response_parts)
+    
+    except Exception as e:
+        print(f"Error retrieving information for defect type {defect_type}: {e}")
+        return f"Error retrieving defect information: {str(e)}"
+
+def get_performance_data(analysis):
+    """Get production performance data based on the query analysis"""
+    if not mongodb_available:
+        return "Database connection is unavailable. Cannot retrieve performance data."
+    
+    try:
+        print("Starting get_performance_data with analysis:", str(analysis).replace('\n', ' ')[:200] + "...")
+        
+        # Ensure required fields exist
+        if 'filters' not in analysis:
+            analysis['filters'] = {}
+        if 'metrics' not in analysis:
+            analysis['metrics'] = []
+            
+        # IMPORTANT: Try to diagnose what collections and document formats exist
+        print("Available collections:", available_collections)
+        
+        # Sample some documents from performance collections to understand format
+        for collection_name in ['performance3', 'monthly_performance']:
+            if collection_name in available_collections:
+                try:
+                    sample_doc = db[collection_name].find_one()
+                    if sample_doc:
+                        print(f"Sample document from {collection_name}: {str(sample_doc)[:500]}...")
+                        print(f"Fields in {collection_name}: {list(sample_doc.keys())}")
+                except Exception as e:
+                    print(f"Error sampling {collection_name}: {e}")
+        
+        # Build the query based on date, time, workshop, chain, etc.
+        query = build_mongodb_query(analysis)
+        print(f"Initial performance query: {query}")
+        
+        # Create a more comprehensive query with all filters
+        comprehensive_query = {}
+        query_conditions = []
+        
+        # Workshop filter - try multiple field names and formats
+        if 'workshop' in analysis['filters']:
+            workshop_id = analysis['filters']['workshop']
+            print(f"Processing workshop filter with ID: {workshop_id}")
+            # Try additional formats for workshops
+            workshop_values = [
+                workshop_id,                 # Plain ID: "3"
+                int(workshop_id) if workshop_id.isdigit() else workshop_id,  # Numeric ID: 3
+                f"Workshop {workshop_id}",    # With prefix: "Workshop 3"
+                f"workshop {workshop_id}",    # Lowercase: "workshop 3"
+                f"W{workshop_id}",           # Short form: "W3"
+                f"w{workshop_id}",           # Lowercase short: "w3"
+                f"Workshop{workshop_id}"     # No space: "Workshop3"
+            ]
+            workshop_condition = {"$or": []}
+            for val in workshop_values:
+                # Add all possible field names for workshop
+                for field in ["workshop", "workshopId", "workshop_id", "workshopID", "Workshop", "shop", "location"]:
+                    workshop_condition["$or"].append({field: val})
+            query_conditions.append(workshop_condition)
+        
+        # Hour filter - try multiple field names and formats
+        if 'hour' in analysis['filters']:
+            hour_id = analysis['filters']['hour']
+            print(f"Processing hour filter with ID: {hour_id}")
+            # Try additional formats for hours
+            hour_values = [
+                hour_id,              # Plain: "13"
+                f"{hour_id}:00",      # With minutes: "13:00"
+                f"{hour_id}h",        # With h: "13h"
+                f"{hour_id}:00:00",   # Full time: "13:00:00"
+                int(hour_id) if hour_id.isdigit() else hour_id  # Numeric: 13
+            ]
+            hour_condition = {"$or": []}
+            for val in hour_values:
+                # Add all possible field names for hour
+                for field in ["hour", "timeHour", "time_hour", "Hour", "time", "productionHour"]:
+                    hour_condition["$or"].append({field: val})
+            
+            # Also try to match against ISO date strings with the hour
+            hour_regex_patterns = [
+                {"date": {"$regex": f"T{hour_id.zfill(2)}:", "$options": "i"}},
+                {"date": {"$regex": f" {hour_id}:", "$options": "i"}},
+                {"dateTime": {"$regex": f"T{hour_id.zfill(2)}:", "$options": "i"}},
+                {"timestamp": {"$regex": f"T{hour_id.zfill(2)}:", "$options": "i"}}
+            ]
+            hour_condition["$or"].extend(hour_regex_patterns)
+            
+            query_conditions.append(hour_condition)
+        
+        # Chain filter - try multiple field names
+        if 'chain' in analysis['filters']:
+            chain_id = analysis['filters']['chain']
+            chain_condition = {"$or": [
+                {"chain": chain_id},
+                {"chain": int(chain_id) if chain_id.isdigit() else chain_id},
+                {"chainId": chain_id},
+                {"chainId": int(chain_id) if chain_id.isdigit() else chain_id},
+                {"chain_id": chain_id},
+                {"chain_id": int(chain_id) if chain_id.isdigit() else chain_id}
+            ]}
+            query_conditions.append(chain_condition)
+        
+        # Date filter - try multiple field names and formats
+        if analysis.get('date_info'):
+            date_info = analysis.get('date_info')
+            if date_info['type'] == 'exact_date':
+                date_value = date_info['value']
+                date_condition = {"$or": [
+                    {"date": date_value},
+                    {"date": {"$regex": f"^{date_value}"}},
+                    {"productionDate": date_value},
+                    {"productionDate": {"$regex": f"^{date_value}"}}
+                ]}
+                query_conditions.append(date_condition)
+            elif date_info['type'] == 'relative_date' and isinstance(date_info.get('value'), dict):
+                start_date = date_info['value']['start']
+                end_date = date_info['value']['end']
+                date_range_condition = {"$or": [
+                    {"date": {"$gte": start_date, "$lte": end_date}},
+                    {"productionDate": {"$gte": start_date, "$lte": end_date}}
+                ]}
+                query_conditions.append(date_range_condition)
+        
+        # Combine all conditions with AND
+        if query_conditions:
+            comprehensive_query = {"$and": query_conditions}
+            print(f"Comprehensive query: {comprehensive_query}")
+        else:
+            comprehensive_query = query
+            
+        # Add an option to search all collections for production data
+        all_collections = [coll for coll in available_collections if 'test' not in coll.lower()]
+        print(f"Will search across all {len(all_collections)} collections if needed")
+        
+        # Select performance collections to try, prioritizing based on analysis
+        performance_collections = []
+        
+        # First try collections that match common performance naming patterns
+        for coll in available_collections:
+            if any(pattern in coll.lower() for pattern in ['performance', 'production', 'output', 'workshop']):
+                performance_collections.append(coll)
+        
+        # Add specific known collection names if they exist
+        if 'performance3' in available_collections and 'performance3' not in performance_collections:
+            performance_collections.append('performance3')
+        if 'monthly_performance' in available_collections and 'monthly_performance' not in performance_collections:
+            performance_collections.append('monthly_performance')
+            
+        # If still no collections found, use defaults
+        if not performance_collections:
+            performance_collections = ['performance3', 'monthly_performance']
+        
+        print(f"Performance collections to try first: {performance_collections}")
+        
+        # Track hour filter separately to apply after database query if needed
+        has_hour_filter = 'hour' in analysis['filters']
+        hour_value = analysis['filters'].get('hour')
+        
+        # Try each collection with the comprehensive query
+        documents = []
+        collection_used = None
+        
+        for collection_name in performance_collections:
+            if collection_name in available_collections:
+                try:
+                    print(f"Querying collection: {collection_name} with comprehensive query")
+                    current_docs = list(db[collection_name].find(comprehensive_query).limit(100))
+                    if current_docs:
+                        print(f"Found {len(current_docs)} documents in {collection_name}")
+                        documents = current_docs
+                        collection_used = collection_name
+                        break
+                except Exception as e:
+                    print(f"Error querying {collection_name}: {e}")
+        
+        # If no results with comprehensive query, try with original query
+        if not documents and query and query != comprehensive_query:
+            print("No results with comprehensive query, trying original query...")
+            
+            for collection_name in performance_collections:
+                if collection_name in available_collections:
+                    try:
+                        print(f"Querying collection: {collection_name} with original query")
+                        current_docs = list(db[collection_name].find(query).limit(100))
+                        if current_docs:
+                            print(f"Found {len(current_docs)} documents in {collection_name}")
+                            documents = current_docs
+                            collection_used = collection_name
+                            break
+                    except Exception as e:
+                        print(f"Error querying {collection_name}: {e}")
+        
+        # If still no results, try a special query just looking for workshop
+        if not documents and 'workshop' in analysis['filters']:
+            print("Trying a more flexible workshop-only search...")
+            workshop_id = analysis['filters']['workshop']
+            
+            # Create a more flexible workshop query
+            flexible_workshop_query = {"$or": [
+                {"workshop": {"$regex": workshop_id, "$options": "i"}},
+                {"workshopId": {"$regex": workshop_id, "$options": "i"}},
+                {"workshop_id": {"$regex": workshop_id, "$options": "i"}},
+                {"Workshop": {"$regex": workshop_id, "$options": "i"}}
+            ]}
+            
+            # Try in performance collections first
+            for collection_name in performance_collections:
+                if collection_name in available_collections:
+                    try:
+                        print(f"Trying flexible workshop query in {collection_name}")
+                        workshop_docs = list(db[collection_name].find(flexible_workshop_query).limit(100))
+                        if workshop_docs:
+                            print(f"Found {len(workshop_docs)} documents with flexible workshop query")
+                            
+                            # If we have an hour filter, try to apply it in memory
+                            if hour_value:
+                                print(f"Filtering for hour: {hour_value}")
+                                filtered_docs = []
+                                for doc in workshop_docs:
+                                    # Check for hour in various formats and fields
+                                    hour_matched = False
+                                    
+                                    # Print document for debugging
+                                    print(f"Checking document: {str(doc)[:100]}...")
+                                    
+                                    # Check hour in standard fields
+                                    for hour_field in ['hour', 'timeHour', 'time_hour', 'Hour']:
+                                        if hour_field in doc:
+                                            doc_hour = str(doc[hour_field])
+                                            print(f"Found hour field: {hour_field}={doc_hour}")
+                                            if (doc_hour == hour_value or 
+                                                doc_hour.startswith(f"{hour_value}:") or
+                                                hour_value in doc_hour):
+                                                hour_matched = True
+                                                print(f"Matched hour: {doc_hour}")
+                                                break
+                                    
+                                    # Check date field for hour
+                                    if not hour_matched and 'date' in doc and isinstance(doc['date'], str):
+                                        date_str = doc['date']
+                                        print(f"Checking date field: {date_str}")
+                                        if 'T' in date_str:
+                                            time_part = date_str.split('T')[1]
+                                            if time_part.startswith(f"{hour_value}:") or time_part.startswith(f"{hour_value.zfill(2)}:"):
+                                                hour_matched = True
+                                                print(f"Matched hour in date: {time_part}")
+                                    
+                                    if hour_matched:
+                                        filtered_docs.append(doc)
+                                
+                                if filtered_docs:
+                                    documents = filtered_docs
+                                    collection_used = collection_name
+                                    print(f"After filtering: {len(documents)} documents match hour {hour_value}")
+                                    break
+                                else:
+                                    print(f"No documents match hour {hour_value}")
+                            else:
+                                # If no hour filter, use all the workshops docs
+                                documents = workshop_docs
+                                collection_used = collection_name
+                                break
+                    except Exception as e:
+                        print(f"Error with flexible workshop query: {e}")
+            
+            # If still nothing found, try all collections as a last resort
+            if not documents:
+                print("Last resort: Checking all collections for workshop data...")
+                for collection_name in all_collections:
+                    try:
+                        print(f"Checking collection: {collection_name}")
+                        # First get a sample to see if this collection has relevant fields
+                        sample = db[collection_name].find_one()
+                        if sample:
+                            # Check if this collection seems to have workshop-related data
+                            has_workshop_field = any(field.lower() in ['workshop', 'workshopid'] for field in sample.keys())
+                            
+                            if has_workshop_field:
+                                print(f"Collection {collection_name} has workshop fields, trying query")
+                                all_docs = list(db[collection_name].find(flexible_workshop_query).limit(50))
+                                if all_docs:
+                                    print(f"Found {len(all_docs)} workshop documents in {collection_name}")
+                                    if hour_value:
+                                        # Filter for hour in memory
+                                        hour_docs = []
+                                        for doc in all_docs:
+                                            for hour_field in ['hour', 'timeHour', 'Hour', 'time']:
+                                                if hour_field in doc:
+                                                    doc_hour = str(doc[hour_field])
+                                                    if doc_hour == hour_value or doc_hour.startswith(f"{hour_value}:"):
+                                                        hour_docs.append(doc)
+                                                        break
+                                        
+                                        if hour_docs:
+                                            documents = hour_docs
+                                            collection_used = collection_name
+                                            print(f"Found {len(documents)} documents matching hour {hour_value}")
+                                            break
+                                    else:
+                                        documents = all_docs
+                                        collection_used = collection_name
+                                        break
+                    except Exception as e:
+                        print(f"Error checking collection {collection_name}: {e}")
+
+        # If still no documents found, check if there's data at all in the database
+        if not documents:
+            # Construct a clear message about what we couldn't find
+            message = "No performance data found"
+            
+            if 'workshop' in analysis['filters']:
+                message += f" for Workshop {analysis['filters']['workshop']}"
+            
+            if 'chain' in analysis['filters']:
+                message += f" in Chain {analysis['filters']['chain']}"
+            
+            if analysis.get('date_info'):
+                date_info = analysis.get('date_info')
+                if date_info['type'] == 'exact_date':
+                    message += f" on {date_info['value']}"
+                elif date_info['type'] == 'relative_date':
+                    if isinstance(date_info['value'], dict):
+                        message += f" between {date_info['value']['start']} and {date_info['value']['end']}"
+                    else:
+                        message += f" for {date_info.get('description', date_info['value'])}"
+            
+            if 'hour' in analysis['filters']:
+                message += f" at {analysis['filters']['hour']}:00"
+                
+            # Check if there's any production data at all
+            for collection_name in performance_collections:
+                if collection_name in available_collections:
+                    try:
+                        count = db[collection_name].count_documents({})
+                        if count > 0:
+                            message += f". Found {count} total records in {collection_name} collection."
+                            
+                            # Sample a document to show format
+                            sample = db[collection_name].find_one()
+                            if sample:
+                                if 'workshop' in sample:
+                                    message += f" Sample workshop format: '{sample['workshop']}'"
+                                if 'hour' in sample:
+                                    message += f" Sample hour format: '{sample['hour']}'"
+                            break
+                    except Exception:
+                        pass
+            
+            return message
+        
+        # Apply hour filter after database query if needed
+        if has_hour_filter and hour_value and documents:
+            print(f"Applying hour filter {hour_value} after database query")
+            filtered_documents = []
+            
+            for doc in documents:
+                # Check all possible hour field representations
+                hour_matched = False
+                
+                # Try 'hour' field - could be string or integer
+                if 'hour' in doc:
+                    doc_hour = str(doc['hour'])
+                    # Handle formats like "13:00" or just "13"
+                    if doc_hour == hour_value or doc_hour.startswith(f"{hour_value}:"):
+                        hour_matched = True
+                        print(f"Matched hour value: {doc_hour}")
+                
+                # Try 'timeHour' field - could be string or integer
+                elif 'timeHour' in doc:
+                    doc_hour = str(doc['timeHour'])
+                    # Handle formats like "13:00" or just "13"
+                    if doc_hour == hour_value or doc_hour.startswith(f"{hour_value}:"):
+                        hour_matched = True
+                        print(f"Matched timeHour value: {doc_hour}")
+                
+                # Try to extract hour from date field if it exists
+                elif 'date' in doc and isinstance(doc['date'], str) and 'T' in doc['date']:
+                    # Extract hour from ISO date format like "2025-05-09T13:00:00Z"
+                    try:
+                        date_parts = doc['date'].split('T')
+                        if len(date_parts) > 1 and ':' in date_parts[1]:
+                            extracted_hour = date_parts[1].split(':')[0]
+                            if extracted_hour == hour_value:
+                                hour_matched = True
+                                print(f"Matched hour from date: {extracted_hour}")
+                    except Exception:
+                        pass
+                
+                # Print documents that don't match for debugging
+                if not hour_matched and ('hour' in doc or 'timeHour' in doc):
+                    print(f"Non-matching hour value: {doc.get('hour', doc.get('timeHour', 'unknown'))}")
+                
+                if hour_matched:
+                    filtered_documents.append(doc)
+            
+            if filtered_documents:
+                print(f"Hour filter applied: Kept {len(filtered_documents)} of {len(documents)} documents")
+                documents = filtered_documents
+            else:
+                print(f"Hour filter applied: No documents match hour {hour_value}")
+                # Debug: List some of the documents to see what hours are available
+                available_hours = set()
+                for doc in documents[:10]:  # Check first 10 docs
+                    if 'hour' in doc:
+                        available_hours.add(str(doc['hour']))
+                    elif 'timeHour' in doc:
+                        available_hours.add(str(doc['timeHour']))
+                if available_hours:
+                    print(f"Available hours in data: {', '.join(available_hours)}")
+                
+                return f"No performance data found for Workshop {analysis['filters'].get('workshop', '')} at {hour_value}:00 on {analysis.get('date_info', {}).get('value', '')}"
+        
+        # Apply additional check for workshop format if needed
+        if 'workshop' in analysis['filters'] and documents:
+            workshop_id = analysis['filters']['workshop']
+            expected_formats = [
+                workshop_id,  # Plain ID: "3"
+                f"Workshop {workshop_id}",  # With prefix: "Workshop 3"
+                f"W{workshop_id}",  # Short form: "W3"
+                f"workshop {workshop_id}",  # Lowercase: "workshop 3"
+                f"Workshop{workshop_id}"  # No space: "Workshop3"
+            ]
+            
+            workshop_filtered_docs = []
+            for doc in documents:
+                if 'workshop' in doc:
+                    doc_workshop = str(doc['workshop'])
+                    if any(doc_workshop == expected for expected in expected_formats):
+                        workshop_filtered_docs.append(doc)
+                        print(f"Matched workshop format: {doc_workshop}")
+            
+            if workshop_filtered_docs:
+                print(f"Workshop format filter applied: Kept {len(workshop_filtered_docs)} of {len(documents)} documents")
+                documents = workshop_filtered_docs
+                
+        # Process the results if we have documents
+        if not documents:
+            return "No performance data found matching your criteria."
+            
+        # Determine the fields available in the documents
+        sample_doc = documents[0]
+        fields = list(sample_doc.keys())
+        
+        # Identify field names for production and defects
+        production_fields = [f for f in fields if any(p in f.lower() for p in ['produced', 'production', 'output'])]
+        defect_fields = [f for f in fields if any(p in f.lower() for p in ['defect', 'quality'])]
+        order_fields = [f for f in fields if any(p in f.lower() for p in ['order', 'reference', 'ref'])]
+        target_fields = [f for f in fields if any(p in f.lower() for p in ['target', 'goal', 'plan'])]
+        
+        # Default field names if we couldn't identify specific ones
+        production_field = production_fields[0] if production_fields else 'produced'
+        defect_field = defect_fields[0] if defect_fields else 'defects'
+        order_field = order_fields[0] if order_fields else 'orderRef'
+        target_field = target_fields[0] if target_fields else 'productionTarget'
+        
+        print(f"Using fields - Production: {production_field}, Defects: {defect_field}, Order: {order_field}, Target: {target_field}")
+        
+        total_produced = 0
+        total_defects = 0
+        total_target = 0
+        
+        # Track various dimensions for grouping
+        by_workshop = {}
+        by_chain = {}
+        by_date = {}
+        by_hour = {}
+        by_order = {}
+        
+        # Process each document
+        for doc in documents:
+            # Extract production, defects, and target values
+            produced = safe_get_numeric(doc, [production_field, 'produced', 'production', 'output'])
+            defects = safe_get_numeric(doc, [defect_field, 'defects', 'qualityIssues'])
+            target = safe_get_numeric(doc, [target_field, 'productionTarget', 'target', 'goal'])
+            
+            # Update totals
+            total_produced += produced
+            total_defects += defects
+            total_target += target
+            
+            # Get workshop (if available)
+            workshop = None
+            for w_field in ['workshop', 'workshopId', 'workshop_id']:
+                if w_field in doc and doc[w_field] is not None:
+                    workshop = str(doc[w_field])
+                    break
+            
+            # Get chain (if available)
+            chain = None
+            for c_field in ['chain', 'chainId', 'chain_id']:
+                if c_field in doc and doc[c_field] is not None:
+                    chain = str(doc[c_field])
+                    break
+            
+            # Get order reference (if available)
+            order_ref = None
+            for o_field in [order_field, 'orderRef', 'order_reference', 'orderReference']:
+                if o_field in doc and doc[o_field] is not None:
+                    order_ref = str(doc[o_field])
+                    break
+            
+            # Get date and hour (if available)
+            date = None
+            hour = None
+            if 'date' in doc and doc['date']:
+                date_str = str(doc['date'])
+                # Handle ISO date format (2025-05-09T00:00:00.000Z)
+                if 'T' in date_str:
+                    date_parts = date_str.split('T')
+                    date = date_parts[0]
+                    # Extract hour if available
+                    if len(date_parts) > 1 and ':' in date_parts[1]:
+                        hour = date_parts[1].split(':')[0]
+                else:
+                    date = date_str
+            
+            if 'hour' in doc and doc['hour'] is not None:
+                hour = str(doc['hour'])
+            
+            # Group by different dimensions
+            if workshop:
+                if workshop not in by_workshop:
+                    by_workshop[workshop] = {'produced': 0, 'defects': 0, 'target': 0}
+                by_workshop[workshop]['produced'] += produced
+                by_workshop[workshop]['defects'] += defects
+                by_workshop[workshop]['target'] += target
+            
+            if chain:
+                if chain not in by_chain:
+                    by_chain[chain] = {'produced': 0, 'defects': 0, 'target': 0}
+                by_chain[chain]['produced'] += produced
+                by_chain[chain]['defects'] += defects
+                by_chain[chain]['target'] += target
+            
+            if date:
+                if date not in by_date:
+                    by_date[date] = {'produced': 0, 'defects': 0, 'target': 0}
+                by_date[date]['produced'] += produced
+                by_date[date]['defects'] += defects
+                by_date[date]['target'] += target
+            
+            if hour:
+                if hour not in by_hour:
+                    by_hour[hour] = {'produced': 0, 'defects': 0, 'target': 0}
+                by_hour[hour]['produced'] += produced
+                by_hour[hour]['defects'] += defects
+                by_hour[hour]['target'] += target
+            
+            if order_ref:
+                if order_ref not in by_order:
+                    by_order[order_ref] = {'produced': 0, 'defects': 0, 'target': 0}
+                by_order[order_ref]['produced'] += produced
+                by_order[order_ref]['defects'] += defects
+                by_order[order_ref]['target'] += target
+        
+        # Format the response based on the query and available data
+        response_parts = []
+        
+        # Add header based on filters
+        header = "Performance Data"
+        
+        if 'workshop' in analysis['filters']:
+            header += f" for Workshop {analysis['filters']['workshop']}"
+        
+        if 'chain' in analysis['filters']:
+            header += f" in Chain {analysis['filters']['chain']}"
+        
+        if analysis.get('date_info'):
+            date_info = analysis.get('date_info')
+            if date_info['type'] == 'exact_date':
+                header += f" on {date_info['value']}"
+            elif date_info['type'] == 'relative_date':
+                if isinstance(date_info['value'], dict):
+                    header += f" from {date_info['value']['start']} to {date_info['value']['end']}"
+                else:
+                    header += f" for {date_info.get('description', date_info['value'])}"
+        
+        response_parts.append(header)
+        
+        # Add overall statistics
+        if 'production' in analysis['metrics'] or 'defects' in analysis['metrics'] or not analysis['metrics']:
+            if total_produced > 0:
+                response_parts.append(f"Total production: {total_produced:.0f} units")
+            
+            if total_defects > 0:
+                response_parts.append(f"Total defects: {total_defects:.0f}")
+                if total_produced > 0:
+                    defect_rate = (total_defects / total_produced) * 100
+                    response_parts.append(f"Defect rate: {defect_rate:.2f}%")
+            
+            if total_target > 0:
+                response_parts.append(f"Production target: {total_target:.0f} units")
+                if total_produced > 0:
+                    completion_rate = (total_produced / total_target) * 100
+                    response_parts.append(f"Target completion: {completion_rate:.2f}%")
+        
+        # Add breakdown by specific dimension based on the query
+        # If the query is filtered by workshop, show breakdown by date/hour
+        # If the query is filtered by date, show breakdown by workshop/chain
+        
+        if 'workshop' in analysis['filters'] and by_hour and len(by_hour) > 1:
+            # Show hour breakdown for specific workshop
+            response_parts.append("\nProduction by hour:")
+            hour_lines = []
+            for hour, data in sorted(by_hour.items(), key=lambda x: x[0]):
+                hour_lines.append(f"Hour {hour}: {data['produced']:.0f} units, {data['defects']:.0f} defects")
+            response_parts.append(" | ".join(hour_lines[:5]))  # Show top 5
+        
+        elif 'date' in analysis['filters'] and by_workshop and len(by_workshop) > 1:
+            # Show workshop breakdown for specific date
+            response_parts.append("\nProduction by workshop:")
+            workshop_lines = []
+            for workshop, data in sorted(by_workshop.items(), key=lambda x: x[1]['produced'], reverse=True):
+                workshop_lines.append(f"Workshop {workshop}: {data['produced']:.0f} units, {data['defects']:.0f} defects")
+            response_parts.append(" | ".join(workshop_lines[:5]))  # Show top 5
+        
+        elif len(by_date) > 1 and not 'date' in analysis['filters']:
+            # Show date breakdown if multiple dates and not filtered by date
+            response_parts.append("\nProduction by date:")
+            date_lines = []
+            for date, data in sorted(by_date.items(), key=lambda x: x[0]):
+                date_lines.append(f"{date}: {data['produced']:.0f} units, {data['defects']:.0f} defects")
+            response_parts.append(" | ".join(date_lines[:5]))  # Show most recent 5
+        
+        elif len(by_workshop) > 1 and not 'workshop' in analysis['filters']:
+            # Show workshop breakdown if multiple workshops and not filtered by workshop
+            response_parts.append("\nProduction by workshop:")
+            workshop_lines = []
+            for workshop, data in sorted(by_workshop.items(), key=lambda x: x[1]['produced'], reverse=True):
+                workshop_lines.append(f"Workshop {workshop}: {data['produced']:.0f} units, {data['defects']:.0f} defects")
+            response_parts.append(" | ".join(workshop_lines[:5]))  # Show top 5
+        
+        # If order references are present, show them
+        if by_order and len(by_order) > 0:
+            response_parts.append("\nProduction by order:")
+            order_lines = []
+            for order_ref, data in sorted(by_order.items(), key=lambda x: x[1]['produced'], reverse=True):
+                # Try to get target from order_references collection if available
+                target = data['target']
+                if target == 0 and 'order_references' in available_collections:
+                    try:
+                        order_doc = db.order_references.find_one({"orderRef": order_ref})
+                        if order_doc and 'productionTarget' in order_doc:
+                            target = float(order_doc['productionTarget'])
+                    except Exception:
+                        pass
+                
+                order_line = f"Order {order_ref}: {data['produced']:.0f} units"
+                if target > 0:
+                    completion = (data['produced'] / target) * 100
+                    order_line += f" ({completion:.1f}% of target)"
+                order_lines.append(order_line)
+            response_parts.append(" | ".join(order_lines[:5]))  # Show top 5
+        
+        # Add sample size information
+        response_parts.append(f"\nBased on {len(documents)} records from {collection_used or 'unknown'} collection")
+        
+        return "\n".join(response_parts)
+    
+    except Exception as e:
+        print(f"Error retrieving performance data: {e}")
+        return f"Error retrieving performance data: {str(e)}"
 
 if __name__ == "__main__":
     print("Starting chatbot service on port 5001...")

@@ -76,6 +76,8 @@ class ChatbotService {
         throw Exception('User ID not found');
       }
       
+      print('Getting chat history for user: $userId');
+      
       // Try both approaches to maximize chances of success
       // 1. First try the direct Flask endpoint with the MongoDB ID
       try {
@@ -88,9 +90,19 @@ class ChatbotService {
         
         if (directResponse.statusCode == 200) {
           final data = json.decode(directResponse.body);
+          print('Direct Flask response status: ${data['status']}');
+          print('Conversation count: ${data['count']}');
+          if (data['server_time'] != null) {
+            print('Server time: ${data['server_time']}');
+          }
+          
           if (data['status'] == 'success' && data['conversations'] != null) {
             print('Successfully retrieved chat history directly from Flask');
-            return List<Map<String, dynamic>>.from(data['conversations']);
+            final conversations = List<Map<String, dynamic>>.from(data['conversations']);
+            if (conversations.isNotEmpty) {
+              print('First conversation timestamp: ${conversations[0]['timestamp']}');
+            }
+            return conversations;
           }
         }
       } catch (e) {
@@ -109,8 +121,14 @@ class ChatbotService {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        print('Spring Boot response: ${data['status']}');
+        
         if (data['status'] == 'success' && data['conversations'] != null) {
-          return List<Map<String, dynamic>>.from(data['conversations']);
+          final conversations = List<Map<String, dynamic>>.from(data['conversations']);
+          if (conversations.isNotEmpty) {
+            print('First conversation timestamp from Spring Boot: ${conversations[0]['timestamp']}');
+          }
+          return conversations;
         }
         return [];
       } else if (response.statusCode == 401 || response.statusCode == 403) {
