@@ -14,7 +14,7 @@ class InterventionService {
     return 'http://192.168.3.128:8080'; // Fallback
   }*/
 
-  static String baseUrl = 'http://192.168.1.19:8080';
+  static String baseUrl = 'http://10.0.2.2:8080';
 
   // Get auth token from shared preferences
   Future<String?> _getToken() async {

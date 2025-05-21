@@ -19,7 +19,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   bool _isLoading = false;
   bool _codeSent = false;
   bool _isPasswordVisible = false;
-  static const String baseUrl = 'http://192.168.1.19:8080';
+  static const String baseUrl = 'http://10.0.2.2:8080';
 
   void _handleSendCode() async {
     if (_formKey.currentState!.validate()) {

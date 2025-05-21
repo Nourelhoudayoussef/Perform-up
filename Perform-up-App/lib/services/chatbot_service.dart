@@ -82,7 +82,7 @@ class ChatbotService {
       // 1. First try the direct Flask endpoint with the MongoDB ID
       try {
         final directResponse = await http.get(
-          Uri.parse('http://192.168.1.19:5001/chatbot/history/$userId'),
+          Uri.parse('http://10.0.2.2:5001/chatbot/history/$userId'),
           headers: {
             'Content-Type': 'application/json',
           },
