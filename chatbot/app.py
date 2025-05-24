@@ -9,6 +9,9 @@ from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 import numpy as np
 import time  # Add this import for sleep functionality
+import os # Import os module
+from predict_intent import IntentPredictor
+from bson import ObjectId
 
 # Download required NLTK data - only what we actually need
 try:
@@ -21,6 +24,9 @@ except Exception as e:
 app = Flask(__name__)
 # Enable CORS for all routes and origins
 CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Instantiate the intent predictor (adjust model_dir if needed)
+intent_predictor = IntentPredictor(model_dir='models')
 
 # MongoDB connection with retry logic
 def connect_to_mongodb(max_retries=5, retry_delay=5):
@@ -291,8 +297,8 @@ def analyze_question(text):
                 print(f"Detected defect query type: {query_type}")
                 if 'defect_type' in analysis['filters']:
                     print(f"Specific defect type: {analysis['filters']['defect_type']}")
-                break
-        
+            break
+    
         # If we found a match, no need to check other patterns
         if analysis['defect_query_type']:
             break
@@ -303,24 +309,23 @@ def analyze_question(text):
         analysis['math_operation'] = 'sum'
         print("Setting default defect query type to statistics")
             
-    # Detect intent for machine failures specifically
+    # Detect intent for machine failures or interventions specifically
     failure_patterns = [
-        r'(machine|equipment)\s+(failures?|breakdowns?|issues?|problems?)',
+        r'(machine|equipment)[^\w]*(failures?|breakdowns?|issues?|problems?|failed)',
         r'(failures?|breakdowns?)\s+of\s+(machines?|equipment)',
-        r'(show|display|get|list|find)\s+.*\s+(machine|equipment)\s+(failures?|breakdowns?)',
-        r'(distribution|spread|statistics)\s+of\s+(machine|equipment)\s+(failures?|breakdowns?)'
+        r'(show|display|get|list|find)[^\w]*.*(machine|equipment)[^\w]*(failures?|breakdowns?)',
+        r'(distribution|spread|statistics)[^\w]*of[^\w]*(machine|equipment)[^\w]*(failures?|breakdowns?)',
+        r'how many[^\w]*(machines?|equipment)[^\w]*(failed|failures?|breakdowns?)',
+        r'intervention(s)?',
     ]
-    
     for pattern in failure_patterns:
         if re.search(pattern, text, re.IGNORECASE):
             analysis['metrics'].add('failures')
-            print("Detected machine failure query intent")
-            
+            print("Detected machine failure/intervention query intent")
             # Check if this is a distribution/statistics query
             if re.search(r'distribution|spread|statistics', text, re.IGNORECASE):
                 analysis['math_operation'] = 'distribution'
                 print("Setting math operation to distribution for failure statistics")
-                
             break
     
     # Detect compare/comparison operations
@@ -548,14 +553,12 @@ def analyze_question(text):
         if filter_type == 'machine' and 'failures' in analysis['metrics'] and not re.search(r'for machine|by machine|specific machine', text, re.IGNORECASE):
             print("Query is about general machine failures, not filtering by specific machine")
             continue
-            
         match = re.search(pattern, text, re.IGNORECASE)
-        if match:
+        if match and match.lastindex is not None and match.group(1) is not None:
             # Clean up the matched value
             value = match.group(1).strip()
             # Remove common words and keep only the relevant part
             value = re.sub(r'\b(handled|by|fixed|repaired)\b', '', value, flags=re.IGNORECASE).strip()
-            
             # Special handling for technician
             if filter_type == 'technician':
                 # Just extract the name without the word "technician"
@@ -587,6 +590,22 @@ def analyze_question(text):
             }
         }
         print(f"Set date range for last month: {analysis['date_info']}")
+    
+    # Fallback: If the question contains 'by <technician name>' and technician filter is not set, extract it
+    if 'technician' not in analysis['filters']:
+        by_match = re.search(r'by\s+([a-zA-Z0-9_\- ]+)', text, re.IGNORECASE)
+        if by_match:
+            tech_name = by_match.group(1).strip()
+            if tech_name:
+                analysis['filters']['technician'] = tech_name
+
+    # Fallback: If the question contains 'machine' followed by a reference and machine filter is not set, extract it
+    if 'machine' not in analysis['filters']:
+        machine_match = re.search(r'machine\s*([a-zA-Z0-9_\-]+)', text, re.IGNORECASE)
+        if machine_match:
+            machine_ref = machine_match.group(1).strip()
+            if machine_ref:
+                analysis['filters']['machine'] = machine_ref
     
     return analysis
 
@@ -1153,45 +1172,35 @@ def format_calculation_response(calc_results):
 def build_mongodb_query(analysis):
     """Build a MongoDB query based on the analysis without hardcoded field names"""
     query = {}
-    
     # Add date filters
     if analysis['date_info']:
         date_info = analysis['date_info']
         if date_info['type'] == 'exact_date':
-            # Handle both date formats (with and without time)
             date_value = date_info['value']
             query['$or'] = [
-                {'date': date_value},  # Exact match for "2025-04-24" format
-                {'date': {'$regex': f"^{date_value}"}}  # Prefix match for "2025-04-24T..." format
+                {'date': date_value},
+                {'date': {'$regex': f"^{date_value}"}}
             ]
         elif date_info['type'] == 'relative_date':
             if isinstance(date_info['value'], dict):
-                # For date range queries, we need to handle both formats
                 start_date = date_info['value']['start']
                 end_date = date_info['value']['end']
                 query['$or'] = [
-                    # For "2025-04-24" format
                     {'date': {'$gte': start_date, '$lte': end_date}},
-                    # For "2025-04-24T..." format 
                     {'date': {'$regex': f"^({start_date}|{end_date})"}}
                 ]
             else:
                 query['date'] = date_info['value']
-    
     # Add other filters with case-insensitive search
     for filter_type, value in analysis['filters'].items():
         if filter_type == 'technician':
-            # Handle all possible field naming conventions for technician
-            # Use both exact and partial matching to improve results
             print(f"Building technician query for: '{value}'")
             query['$or'] = [
-                # Exact match (case-insensitive)
                 {'technicianName': {'$regex': f"^{re.escape(value)}$", '$options': 'i'}},
                 {'technician_name': {'$regex': f"^{re.escape(value)}$", '$options': 'i'}},
                 {'technician': {'$regex': f"^{re.escape(value)}$", '$options': 'i'}},
                 {'repairTechnician': {'$regex': f"^{re.escape(value)}$", '$options': 'i'}},
                 {'engineer': {'$regex': f"^{re.escape(value)}$", '$options': 'i'}},
-                # Partial match as fallback (case-insensitive)
                 {'technicianName': {'$regex': f"{re.escape(value)}", '$options': 'i'}},
                 {'technician_name': {'$regex': f"{re.escape(value)}", '$options': 'i'}},
                 {'technician': {'$regex': f"{re.escape(value)}", '$options': 'i'}},
@@ -1210,10 +1219,10 @@ def build_mongodb_query(analysis):
                 {'machineReference': {'$regex': value, '$options': 'i'}},
                 {'machine_id': {'$regex': value, '$options': 'i'}},
                 {'machine': {'$regex': value, '$options': 'i'}},
-                {'machineId': {'$regex': value, '$options': 'i'}}
+                {'machineId': {'$regex': value, '$options': 'i'}},
+                {'equipment_id': {'$regex': value, '$options': 'i'}}
             ]
         elif filter_type == 'order':
-            # Try both string and numeric format for order references
             query['$or'] = [
                 {'orderRef': value},
                 {'order_reference': value},
@@ -1222,7 +1231,6 @@ def build_mongodb_query(analysis):
                 {'order': value},
                 {'orderId': value},
                 {'order_id': value},
-                # Numeric variants if the value is a digit
                 {'orderRef': int(value)} if value.isdigit() else {},
                 {'order_reference': int(value)} if value.isdigit() else {},
                 {'orderReference': int(value)} if value.isdigit() else {},
@@ -1231,30 +1239,27 @@ def build_mongodb_query(analysis):
                 {'orderId': int(value)} if value.isdigit() else {},
                 {'order_id': int(value)} if value.isdigit() else {}
             ]
-            # Remove any empty dictionaries which would be invalid in MongoDB
             query['$or'] = [q for q in query['$or'] if q]
         elif filter_type == 'chain':
             query['chain'] = {'$regex': value, '$options': 'i'}
-    
     return query
 
 def format_response(data, analysis):
     """Format the response based on the data and analysis"""
     if not data:
         if 'failures' in analysis['metrics']:
+            if 'machine' in analysis['filters']:
+                return "there's no failures"
+            if analysis.get('date_info'):
+                return "there's no record"
             return "No machine failures found matching your criteria."
-            
         if 'defects' in analysis['metrics']:
             if 'defect_type' in analysis['filters']:
                 return f"No defect data found for type '{analysis['filters']['defect_type']}'. Please check the defect type or try a different query."
             return "No defect data found matching your criteria."
-        
-        # For order reference, give more specific message
         if 'order' in analysis['filters']:
             return f"No data found for order {analysis['filters']['order']}. Please check the order reference number and try again."
-            
         return "No data found matching your criteria."
-    
     response_parts = []
     
     # Handle defects specifically
@@ -1295,8 +1300,73 @@ def format_response(data, analysis):
         
         return " | ".join(response_parts)
     
-    # Handle machine failures specifically
+    # Handle machine failures/interventions specifically
     if 'failures' in analysis['metrics']:
+        import datetime
+        original_question = analysis.get('original_question', '')
+        # If the question is about total time spent, sum the time fields
+        if any(kw in original_question.lower() for kw in ['total time spent', 'sum time spent', 'total maintenance time']):
+            total_time = 0
+            for doc in data:
+                for field in ['timeSpent', 'time_spent', 'repair_time', 'maintenance_time', 'duration']:
+                    if field in doc:
+                        try:
+                            total_time += float(doc[field])
+                        except Exception:
+                            pass
+            return f"Total time spent on machine maintenance: {total_time:.0f} minutes"
+        # If technician filter is present, list interventions for that technician
+        if 'technician' in analysis['filters']:
+            technician = analysis['filters']['technician'].replace(' ', '').lower()
+            # Only include records where any technician field matches
+            def matches_technician(doc):
+                for field in ['technicianName', 'technician_name', 'technician', 'technicianId', 'technician_id']:
+                    if field in doc and isinstance(doc[field], str):
+                        if doc[field].replace(' ', '').lower() == technician:
+                            return True
+                return False
+            filtered_data = [doc for doc in data if matches_technician(doc)]
+            # Sort data by date descending if possible
+            def get_date(doc):
+                for field in ['date', 'breakdown_date', 'maintenance_date', 'failure_date', 'reportDate']:
+                    if field in doc:
+                        return str(doc[field])
+                return ''
+            sorted_data = sorted(filtered_data, key=get_date, reverse=True)
+            original_question = analysis.get('original_question', '')
+            if 'recent' in original_question.lower():
+                # Filter to current week (Monday to today)
+                today = datetime.datetime.now().date()
+                monday = today - datetime.timedelta(days=today.weekday())
+                def is_this_week(doc):
+                    date_str = get_date(doc)
+                    try:
+                        date_obj = datetime.datetime.fromisoformat(date_str[:10]).date()
+                        return monday <= date_obj <= today
+                    except Exception:
+                        return False
+                sorted_data = [doc for doc in sorted_data if is_this_week(doc)]
+                response_parts.append(f"Recent interventions by {analysis['filters']['technician']}:")
+            else:
+                response_parts.append(f"Interventions by {analysis['filters']['technician']}:")
+            for doc in sorted_data:
+                date = ''
+                for field in ['date', 'breakdown_date', 'maintenance_date', 'failure_date', 'reportDate']:
+                    if field in doc:
+                        date = str(doc[field])
+                        break
+                issue = ''
+                for field in ['description', 'issue', 'problem', 'failure_description', 'breakdown_reason']:
+                    if field in doc:
+                        issue = str(doc[field])
+                        break
+                time_spent = ''
+                for field in ['timeSpent', 'time_spent', 'repair_time', 'maintenance_time', 'duration']:
+                    if field in doc:
+                        time_spent = str(doc[field])
+                        break
+                response_parts.append(f"- Date: {date} | Issue: {issue} | Time Spent: {time_spent} minutes")
+            return "\n".join(response_parts)
         total_records = len(data)
         response_parts.append(f"Found {total_records} machine failure records:")
         
@@ -1576,11 +1646,13 @@ def query_database(analysis):
                     collections_to_try.append('new_data.machinefailures')
                 
             # Only use empty query if there are no filters specified
-            if not analysis['filters'] and len(query) == 0:
+            if not analysis['filters'] and not analysis.get('date_info') and len(query) == 0:
                 query = {}  # Clear the query to get all machine failures
                 print("Using empty query to find all machine failures")
             else:
                 print(f"Applying filters to machine failures query: {analysis['filters']}")
+                if analysis.get('date_info'):
+                    print(f"Applying date filter: {analysis['date_info']}")
         elif 'efficiency' in analysis['metrics'] and analysis.get('calculation_type') == 'efficiency_rate':
             # For efficiency rate, prioritize collections with performance data
             perf_collections = [coll for coll in available_collections 
@@ -1641,8 +1713,11 @@ def query_database(analysis):
         
         # If no data found but we're looking for failures, try a more general approach
         if not data and 'failures' in analysis['metrics']:
-            # Only try a more general approach if there are no filters
-            if not analysis['filters']:
+            # If a date filter is present, return a specific message
+            if analysis.get('date_info'):
+                return "there's no recording for this date"
+            # Only try a more general approach if there are no filters and no date filter
+            if not analysis['filters'] and not analysis.get('date_info'):
                 print("No specific failures found. Trying to get all failure records...")
                 # Try to get any failure records
                 for collection_name in collections_to_try:
@@ -1939,33 +2014,204 @@ def safe_get_numeric(record, field_names, default=0):
                 continue
     return default
 
+# Path to the guidance file
+GUIDANCE_FILE_PATH = "c:/Users/noure/Downloads/app_guidance.txt"
+
+def get_guidance(query):
+    """Get guidance response from app_guidance.txt"""
+    try:
+        with open('c:/Users/noure/Downloads/app_guidance.txt', 'r', encoding='utf-8') as f:
+            guidance_text = f.read()
+        
+        # Split into sections by double newlines
+        sections = guidance_text.split('\n\n')
+        
+        # Convert query to lowercase for matching
+        query_lower = query.lower()
+        
+        # Find the most relevant section
+        best_match = None
+        best_score = 0
+        
+        for section in sections:
+            # Skip empty sections
+            if not section.strip():
+                continue
+            
+            # Get the first line as the topic
+            lines = section.strip().split('\n')
+            if not lines:
+                continue
+            
+            topic = lines[0].lower()
+            
+            # Calculate relevance score based on word overlap
+            query_words = set(query_lower.split())
+            topic_words = set(topic.split())
+            overlap = len(query_words.intersection(topic_words))
+            
+            if overlap > best_score:
+                best_score = overlap
+                best_match = section
+        
+        if best_match:
+            return best_match.strip()
+        return "I'm sorry, I couldn't find specific guidance for that question. Please try rephrasing or ask about a different topic."
+    except Exception as e:
+        print(f"Error getting guidance: {e}")
+        return "I'm sorry, I encountered an error while looking up guidance information."
+
 @app.route("/chatbot", methods=["POST"])
 def chatbot():
     data = request.get_json()
     message = data.get("message", "").lower()
-    user_id = data.get("user_id", "anonymous")  # Get user_id from request or use 'anonymous'
+    user_id = data.get("user_id", "anonymous")
+
+    # Role-based greeting feature
+    greeting_words = {"hi", "hello", "hey"}
+    if message.strip() in greeting_words:
+        # Try to get the user's role from the database if user_id is provided
+        role = None
+        if user_id and user_id != "anonymous" and mongodb_available and db is not None:
+            try:
+                # Convert user_id to ObjectId if it's a string
+                if isinstance(user_id, str):
+                    user_id = ObjectId(user_id)
+                user_doc = db["new_data.users"].find_one({"_id": user_id})
+                if user_doc and "role" in user_doc:
+                    role = user_doc["role"]
+            except Exception as e:
+                print(f"Error fetching user role for greeting: {e}")
+        if role:
+            response = f"Hello {role.upper()}!"
+        else:
+            response = "Hello!"
+        # Save greeting response to database
+        if mongodb_available and db is not None:
+            try:
+                current_time = datetime.now(UTC)
+                print(f"Saving greeting conversation for user {user_id} at {current_time.isoformat()}")
+                conversation_doc = {
+                    "user_id": user_id,
+                    "question": message,
+                    "response": response,
+                    "timestamp": current_time
+                }
+                result = db.chatbot_conversations.insert_one(conversation_doc)
+                print(f"Saved greeting conversation for user {user_id}, id: {result.inserted_id}")
+            except Exception as e:
+                print(f"Error saving greeting conversation: {str(e)}")
+        return {"response": response}
+
+    # Existing logic follows...
+    # Get intent prediction
+    prediction = intent_predictor.predict(message)
+    intent = prediction['intent']
+    confidence = prediction['confidence']
     
-    # Analyze the question
+    print(f"Intent: {intent}, Confidence: {confidence:.4f}")
+
+    # Fallback: If message starts with 'how to', 'how do i', or confidence is low, check guidance
+    howto_starts = (
+        message.strip().startswith('how to') or
+        message.strip().startswith('how do i') or
+        message.strip().startswith('how can i') or
+        message.strip().startswith('how should i')
+    )
+    if howto_starts or confidence < 0.6:
+        response = get_guidance(message)
+        # Only return if guidance is found (not the default sorry message)
+        if response and not response.lower().startswith("i'm sorry"):
+            # Save guidance response to database
+            if mongodb_available and db is not None:
+                try:
+                    current_time = datetime.now(UTC)
+                    print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
+                    conversation_doc = {
+                        "user_id": user_id,
+                        "question": message,
+                        "response": response,
+                        "timestamp": current_time
+                    }
+                    result = db.chatbot_conversations.insert_one(conversation_doc)
+                    print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
+                except Exception as e:
+                    print(f"Error saving guidance conversation: {str(e)}")
+            return {"response": response}
+
+    # Handle guidance questions first (existing logic)
+    if intent == 'guidance' and confidence >= 0.4:
+        response = get_guidance(message)
+        # Save guidance response to database
+        if mongodb_available and db is not None:
+            try:
+                current_time = datetime.now(UTC)
+                print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
+                conversation_doc = {
+                    "user_id": user_id,
+                    "question": message,
+                    "response": response,
+                    "timestamp": current_time
+                }
+                result = db.chatbot_conversations.insert_one(conversation_doc)
+                print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
+            except Exception as e:
+                print(f"Error saving guidance conversation: {str(e)}")
+        return {"response": response}
+
+    # Continue with existing logic for database queries
     analysis = analyze_question(message)
+    analysis['original_question'] = message
+
+    response = ""
     
-    # Query the database and get response
-    response = query_database(analysis)
+    # Check if the query is likely NOT a database query (minimal metrics/filters)
+    is_db_query = (
+        analysis['metrics']
+        or analysis['filters']
+        or analysis.get('date_info')
+        or analysis.get('math_operation')
+        or analysis.get('calculation_type')
+        or analysis.get('comparison')
+    )
+
+    if not is_db_query:
+        # Attempt to provide guidance
+        guidance_text = ""
+        try:
+            with open(GUIDANCE_FILE_PATH, 'r') as f:
+                    guidance_text = f.read()
+            response = get_guidance(message, guidance_text)
+        except FileNotFoundError:
+            response = f"Error: Guidance file not found at {GUIDANCE_FILE_PATH}"
+            print(response)
+        except Exception as e:
+            response = f"Error reading guidance file: {str(e)}"
+            print(response)
+
+        if not response:
+            # Fallback if no specific guidance found and not a db query
+            response = "Sorry, I couldn't find a guide for that. Please rephrase or check the app documentation."
+
+    if is_db_query or not response or "Error: Guidance file not found" in response:
+        # If it's a DB query, or guidance wasn't found/had errors, proceed with DB query logic
+        response = query_database(analysis)
+    
+    # Remove <br> and <br><br> from the response if present
+    if isinstance(response, str):
+        response = response.replace('<br><br>', ' ').replace('<br>', ' ')
     
     # Save the conversation to MongoDB
     if mongodb_available and db is not None:
         try:
-            # Create a document with the conversation data
             current_time = datetime.now(UTC)
             print(f"Saving conversation for user {user_id} at {current_time.isoformat()}")
-            
             conversation_doc = {
                 "user_id": user_id,
                 "question": message,
                 "response": response,
-                "timestamp": current_time  # Use the same datetime object
+                "timestamp": current_time
             }
-            
-            # Insert into the chatbot_conversations collection
             result = db.chatbot_conversations.insert_one(conversation_doc)
             print(f"Saved chatbot conversation for user {user_id}, id: {result.inserted_id}")
         except Exception as e:
@@ -2143,7 +2389,7 @@ def get_defect_types():
                     sample = db[coll_name].find_one()
                     if not sample:
                         continue
-                    
+                        
                     # Look for fields that might contain defect type information
                     type_fields = []
                     for field in sample.keys():
@@ -2246,7 +2492,6 @@ def get_defect_types():
                                 enhanced_types.append(f"{type_id} ({name_to_id_map[type_id]})")
                             else:
                                 enhanced_types.append(str(type_id))
-                                
                         unique_types = enhanced_types
                         print(f"Enhanced type IDs with names: {unique_types}")
                 except Exception as e:
