@@ -84,6 +84,17 @@ def extract_date_info(text):
     if date_match:
         return {'type': 'exact_date', 'value': date_match.group(1)}
     
+    # NEW: Extract dates like 'May 9th, 2025' or 'May 9, 2025'
+    month_names = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']
+    month_regex = r'(' + '|'.join(month_names) + r')\s+(\d{1,2})(?:st|nd|rd|th)?[ ,]*?(\d{4})'
+    match = re.search(month_regex, text.lower())
+    if match:
+        month_name = match.group(1)
+        day = int(match.group(2))
+        year = int(match.group(3))
+        month_num = month_names.index(month_name) + 1
+        return {'type': 'exact_date', 'value': f'{year:04d}-{month_num:02d}-{day:02d}'}
+    
     # Detect 'this month' specifically 
     this_month_pattern = r'\bthis\s+month\b'
     if re.search(this_month_pattern, text, re.IGNORECASE):
@@ -161,6 +172,23 @@ def extract_date_info(text):
                 'end': last_day.strftime('%Y-%m-%d')
             },
             'description': month_name
+        }
+    
+    # Handle 'last week' specifically
+    last_week_pattern = r'\blast\s+week\b'
+    if re.search(last_week_pattern, text, re.IGNORECASE):
+        today = datetime.now()
+        # Calculate the start and end of last week (Monday to Sunday)
+        start_of_this_week = today - timedelta(days=today.weekday())
+        start_of_last_week = start_of_this_week - timedelta(days=7)
+        end_of_last_week = start_of_this_week - timedelta(days=1)
+        return {
+            'type': 'relative_date',
+            'value': {
+                'start': start_of_last_week.strftime('%Y-%m-%d'),
+                'end': end_of_last_week.strftime('%Y-%m-%d')
+            },
+            'description': 'last week'
         }
     
     return None
@@ -298,11 +326,9 @@ def analyze_question(text):
                 if 'defect_type' in analysis['filters']:
                     print(f"Specific defect type: {analysis['filters']['defect_type']}")
             break
-    
         # If we found a match, no need to check other patterns
         if analysis['defect_query_type']:
             break
-    
     # If we detect "defects" but no specific query type, set a default
     if 'defects' in analysis['metrics'] and not analysis['defect_query_type']:
         analysis['defect_query_type'] = 'defect_statistics'
@@ -572,6 +598,13 @@ def analyze_question(text):
             elif filter_type == 'order':
                 print(f"Extracted order reference: '{value}'")
                 analysis['filters'][filter_type] = value
+            # Special handling for machine: skip if value is 'maintenance', 'failures', 'failure', 'breakdown', or does not look like a real machine reference
+            elif filter_type == 'machine':
+                generic_words = ['maintenance', 'failures', 'failure', 'breakdown', 'breakdowns', 'issue', 'problem']
+                # Only add if it looks like a real machine reference (e.g., contains a dash and starts with 'W')
+                if value.lower() in generic_words or '-' not in value or not value.upper().startswith('W'):
+                    continue  # Skip adding this as a machine filter
+                analysis['filters'][filter_type] = value
             else:
                 analysis['filters'][filter_type] = value
     
@@ -591,9 +624,13 @@ def analyze_question(text):
         }
         print(f"Set date range for last month: {analysis['date_info']}")
     
-    # Fallback: If the question contains 'by <technician name>' and technician filter is not set, extract it
+    # Fallback: If the question contains 'by <technician name>' or 'recorded by <name>' or 'interventions by <name>' and technician filter is not set, extract it
     if 'technician' not in analysis['filters']:
-        by_match = re.search(r'by\s+([a-zA-Z0-9_\- ]+)', text, re.IGNORECASE)
+        # Match 'interventions' followed anywhere by 'by' or 'recorded by' and a name
+        by_match = re.search(r'interventions.*?(?:recorded by|by)\s+([a-zA-Z0-9_\- ]+)', text, re.IGNORECASE)
+        if not by_match:
+            # Also match 'recorded by <name>' or 'by <name>' anywhere
+            by_match = re.search(r'(?:recorded by|by)\s+([a-zA-Z0-9_\- ]+)', text, re.IGNORECASE)
         if by_match:
             tech_name = by_match.group(1).strip()
             if tech_name:
@@ -604,8 +641,29 @@ def analyze_question(text):
         machine_match = re.search(r'machine\s*([a-zA-Z0-9_\-]+)', text, re.IGNORECASE)
         if machine_match:
             machine_ref = machine_match.group(1).strip()
-            if machine_ref:
+            # Only add if it looks like a real machine reference (contains a dash and starts with 'W')
+            if (machine_ref and machine_ref.lower() != 'maintenance'
+                and '-' in machine_ref and machine_ref.upper().startswith('W')):
                 analysis['filters']['machine'] = machine_ref
+    
+    # Fallback for defect types/names if not detected by regex
+    if not analysis['defect_query_type']:
+        if 'defect types' in text.lower():
+            analysis['metrics'].add('defects')
+            analysis['defect_query_type'] = 'defect_types'
+        elif 'defect names' in text.lower():
+            analysis['metrics'].add('defects')
+            analysis['defect_query_type'] = 'defect_names'
+    
+    # Patch: Force 'failures' metric for repeated/recurrent issue queries
+    repeated_issue_phrases = [
+        'most failures', 'most failed', 'highest failures', 'most breakdowns', 'most issues', 'most problems',
+        'repeated issues', 'recurring issues', 'repeat failures', 'repeat breakdowns', 'repeat problems', 'repeat issues',
+        'machines with repeated issues', 'machines with recurring issues', 'machines with issues more than once', 'machines with multiple failures'
+    ]
+    if any(phrase in text.lower() for phrase in repeated_issue_phrases):
+        analysis['metrics'].discard('defects')
+        analysis['metrics'].add('failures')
     
     return analysis
 
@@ -681,27 +739,116 @@ def perform_calculation(data, analysis):
         # Special handling for efficiency rate calculation
         elif analysis.get('calculation_type') == 'efficiency_rate':
             print("Performing efficiency rate calculation")
-            
-            # Define fields to look for with more comprehensive variations
             production_fields = ['produced', 'production', 'output', 'units', 'quantity', 'producedCount', 'totalProduced']
             time_fields = ['hours', 'duration', 'time', 'workingHours', 'working_hours', 'shiftHours', 'operatingHours']
             efficiency_fields = ['efficiency', 'efficiencyRate', 'efficiency_rate', 'performanceRate', 'performance']
             target_fields = ['target', 'productionTarget', 'production_target', 'targetOutput', 'plannedProduction']
-            
-            # Extract time period for calculation
             time_period = analysis.get('time_period', 'hour')
             
-            # Calculate efficiency rate for each record
+            # --- NEW: Hourly breakdown logic ---
+            # If the user asked for per hour ("per hour" in question or time_period == 'hour'), group by hour
+            original_question = analysis.get('original_question', '')
+            wants_hourly = (
+                time_period == 'hour' or
+                'per hour' in original_question or
+                'hourly' in original_question or
+                'each hour' in original_question or
+                'by hour' in original_question
+            )
+            # If user specified a date, use it; else, default to today for hourly breakdown
+            import datetime
+            date_info = analysis.get('date_info')
+            if wants_hourly:
+                # Build a mapping: hour -> {produced, target}
+                hourly = {}
+                for record in data:
+                    # Extract date and hour
+                    date_str = record.get('date', '')
+                    hour = None
+                    # Try to extract hour from 'hour' field or from date string
+                    if 'hour' in record and record['hour'] is not None:
+                        hour = str(record['hour']).zfill(2)
+                    elif 'timeHour' in record and record['timeHour'] is not None:
+                        hour = str(record['timeHour']).zfill(2)
+                    elif date_str and 'T' in date_str:
+                        # ISO format: 2025-05-09T13:00:00Z
+                        try:
+                            hour = date_str.split('T')[1][:2]
+                        except Exception:
+                            pass
+                    # If no hour, skip
+                    if not hour:
+                        continue
+                    # Filter by date if specified
+                    if date_info:
+                        # If exact date
+                        if date_info.get('type') == 'exact_date':
+                            if not date_str.startswith(date_info['value']):
+                                continue
+                        # If relative_date with start/end
+                        elif date_info.get('type') == 'relative_date' and isinstance(date_info.get('value'), dict):
+                            start = date_info['value'].get('start')
+                            end = date_info['value'].get('end')
+                            if start and end and (date_str < start or date_str > end):
+                                continue
+                        # If relative_date with a single value (e.g., today)
+                        elif date_info.get('type') == 'relative_date' and isinstance(date_info.get('value'), str):
+                            if not date_str.startswith(date_info['value']):
+                                continue
+                    else:
+                        # No date specified: default to today
+                        today = datetime.datetime.now().strftime('%Y-%m-%d')
+                        if not date_str.startswith(today):
+                            continue
+                    # Extract produced and target
+                    produced = 0
+                    target = 0
+                    for field in production_fields:
+                        if field in record and record[field] is not None:
+                            try:
+                                produced = float(record[field])
+                                break
+                            except Exception:
+                                pass
+                    for field in target_fields:
+                        if field in record and record[field] is not None:
+                            try:
+                                target = float(record[field])
+                                break
+                            except Exception:
+                                pass
+                    if hour not in hourly:
+                        hourly[hour] = {'produced': 0, 'target': 0}
+                    hourly[hour]['produced'] += produced
+                    hourly[hour]['target'] += target
+                # Calculate efficiency per hour
+                hourly_efficiency = {}
+                for hour, vals in sorted(hourly.items()):
+                    if vals['target'] > 0:
+                        eff = (vals['produced'] / vals['target']) * 100
+                    else:
+                        eff = 0
+                    hourly_efficiency[hour] = eff
+                results['hourly_efficiency'] = hourly_efficiency
+                results['hourly_sample_size'] = sum(1 for v in hourly.values() if v['target'] > 0)
+                # Also return overall as before
+                total_production = sum(v['produced'] for v in hourly.values())
+                total_target = sum(v['target'] for v in hourly.values())
+                overall_rate = (total_production / total_target) * 100 if total_target > 0 else 0
+                results['overall_rate'] = overall_rate
+                results['overall_performance'] = overall_rate
+                results['time_period'] = 'hour'
+                results['sample_size'] = results['hourly_sample_size']
+                return results
+            # --- END HOURLY LOGIC ---
+
+            # (Otherwise, default/total efficiency logic as before)
             efficiency_rates = []
             total_production = 0
             total_time = 0
             total_target = 0
-            
-            # Collect all field names for debugging
             found_fields = {'production': set(), 'time': set(), 'efficiency': set(), 'target': set()}
-            
             for record in data:
-                # First, identify which fields actually exist in the data
                 for field in production_fields:
                     if field in record and record[field] is not None:
                         found_fields['production'].add(field)
@@ -714,8 +861,6 @@ def perform_calculation(data, analysis):
                 for field in target_fields:
                     if field in record and record[field] is not None:
                         found_fields['target'].add(field)
-                
-                # Extract production value
                 production = 0
                 for field in production_fields:
                     if field in record:
@@ -726,9 +871,7 @@ def perform_calculation(data, analysis):
                                 break
                         except (ValueError, TypeError):
                             pass
-                
-                # Extract working time (default to 1 unit if not found)
-                time_value = 1.0  # Default of 1 hour
+                time_value = 1.0
                 for field in time_fields:
                     if field in record:
                         try:
@@ -738,8 +881,6 @@ def perform_calculation(data, analysis):
                                 break
                         except (ValueError, TypeError):
                             pass
-                
-                # Extract efficiency if available
                 efficiency = None
                 for field in efficiency_fields:
                     if field in record:
@@ -750,8 +891,6 @@ def perform_calculation(data, analysis):
                                 break
                         except (ValueError, TypeError):
                             pass
-                
-                # Extract target if available
                 target = None
                 for field in target_fields:
                     if field in record:
@@ -762,17 +901,12 @@ def perform_calculation(data, analysis):
                                 break
                         except (ValueError, TypeError):
                             pass
-                
                 if production > 0:
-                    # Calculate units per time unit
                     production_rate = production / time_value
                     date = record.get('date', 'unknown')
-                    
-                    # Calculate performance percentage if target is available
                     performance_pct = None
                     if target is not None and target > 0:
                         performance_pct = (production / target) * 100
-                    
                     record_data = {
                         'date': date,
                         'production_rate': production_rate,
@@ -782,39 +916,27 @@ def perform_calculation(data, analysis):
                         'target': target,
                         'performance_pct': performance_pct
                     }
-                    
-                    # Add any other useful fields
                     if 'workshop' in record:
                         record_data['workshop'] = record['workshop']
                     elif 'workshopId' in record:
                         record_data['workshop'] = record['workshopId']
-                    
                     efficiency_rates.append(record_data)
-                    
                     total_production += production
                     total_time += time_value
                     if target is not None:
                         total_target += target
-            
             if not efficiency_rates:
                 return {'error': 'Could not calculate efficiency rates with the available data. Looking at the records, the following relevant fields were found: ' + 
                        ', '.join([f"{k}: {list(v)}" for k, v in found_fields.items() if v])}
-            
-            # Calculate overall metrics
             overall_rate = total_production / total_time if total_time > 0 else 0
             overall_performance = (total_production / total_target) * 100 if total_target > 0 else None
-            
-            # Sort by production rate (highest first)
             efficiency_rates.sort(key=lambda x: x.get('production_rate', 0), reverse=True)
-            
-            # Return results
             results['efficiency_rates'] = efficiency_rates
             results['overall_rate'] = overall_rate
             results['overall_performance'] = overall_performance
             results['time_period'] = time_period
             results['sample_size'] = len(efficiency_rates)
             results['found_fields'] = {k: list(v) for k, v in found_fields.items() if v}
-            
             return results
             
         # Special handling for machine failure distribution
@@ -1167,6 +1289,17 @@ def format_calculation_response(calc_results):
             else:
                 response_parts.append(f"{metric.replace('_', ' ').title()}: {value:.2f}")
     
+    # Special handling for hourly efficiency breakdown
+    if 'hourly_efficiency' in calc_results:
+        overall_rate = calc_results.get('overall_rate', 0)
+        sample_size = calc_results.get('sample_size', 0)
+        response_parts.append(f"Hourly Efficiency Rate (based on {sample_size} hours):")
+        hourly = calc_results['hourly_efficiency']
+        for hour, eff in sorted(hourly.items()):
+            response_parts.append(f"Hour {hour}: {eff:.2f}%")
+        response_parts.append(f"Overall efficiency: {overall_rate:.2f}%")
+        return " | ".join(response_parts)
+    
     return " | ".join(response_parts) if response_parts else "Could not format the calculation results."
 
 def build_mongodb_query(analysis):
@@ -1245,8 +1378,10 @@ def build_mongodb_query(analysis):
     return query
 
 def format_response(data, analysis):
+    print(f"[DEBUG] format_response called with metrics: {analysis['metrics']}, filters: {analysis['filters']}, date_info: {analysis.get('date_info')}")
     """Format the response based on the data and analysis"""
     if not data:
+        print("[DEBUG] Returning from format_response: no data")
         if 'failures' in analysis['metrics']:
             if 'machine' in analysis['filters']:
                 return "there's no failures"
@@ -1270,7 +1405,6 @@ def format_response(data, analysis):
         if defect_query_type == 'defect_statistics':
             total_records = len(data)
             total_defects = sum(safe_get_numeric(d, ['defects', 'qualityIssues', 'defect_count', 'defectCount']) for d in data)
-            response_parts.append(f"Found {total_records} records with defect data")
             response_parts.append(f"Total defects: {total_defects:.0f}")
             
             # Check for workshop filter
@@ -1304,6 +1438,38 @@ def format_response(data, analysis):
     if 'failures' in analysis['metrics']:
         import datetime
         original_question = analysis.get('original_question', '')
+        # Special handling for 'most failures' queries
+        repeated_issue_phrases = [
+            'most failures', 'most failed', 'highest failures', 'most breakdowns', 'most issues', 'most problems',
+            'repeated issues', 'recurring issues', 'repeat failures', 'repeat breakdowns', 'repeat problems', 'repeat issues',
+            'machines with repeated issues', 'machines with recurring issues', 'machines with issues more than once', 'machines with multiple failures'
+        ]
+        if any(phrase in original_question.lower() for phrase in repeated_issue_phrases):
+            # Group by machineReference and count
+            failure_fields = {
+                'machine': ['machineReference', 'machine_id', 'machine', 'machineId', 'equipment_id'],
+            }
+            machine_counts = {}
+            missing_count = 0
+            for failure in data:
+                machine_id = None
+                for field in failure_fields['machine']:
+                    if field in failure and failure[field]:
+                        machine_id = str(failure[field])
+                        break
+                if not machine_id:
+                    missing_count += 1
+                    continue  # Still skip, but count how many are missing
+                machine_counts[machine_id] = machine_counts.get(machine_id, 0) + 1
+            if not machine_counts and missing_count > 0:
+                return "No machine reference information available for these failures."
+            elif not machine_counts:
+                return "No machine failures found for this period."
+            # Find the max count
+            max_count = max(machine_counts.values())
+            top_machines = [m for m, c in machine_counts.items() if c == max_count]
+            response = f"Machine with the most failures this period: {', '.join(top_machines)} ({max_count} failures each)"
+            return response
         # If the question is about total time spent, sum the time fields
         if any(kw in original_question.lower() for kw in ['total time spent', 'sum time spent', 'total maintenance time']):
             total_time = 0
@@ -1315,6 +1481,58 @@ def format_response(data, analysis):
                         except Exception:
                             pass
             return f"Total time spent on machine maintenance: {total_time:.0f} minutes"
+        # If technician filter is present, list interventions for that technician
+        if 'technician' in analysis['filters']:
+            technician = analysis['filters']['technician'].replace(' ', '').lower()
+            # Only include records where any technician field matches
+            def matches_technician(doc):
+                for field in ['technicianName', 'technician_name', 'technician', 'technicianId', 'technician_id']:
+                    if field in doc and isinstance(doc[field], str):
+                        if doc[field].replace(' ', '').lower() == technician:
+                            return True
+                return False
+            filtered_data = [doc for doc in data if matches_technician(doc)]
+            # Sort data by date descending if possible
+            def get_date(doc):
+                for field in ['date', 'breakdown_date', 'maintenance_date', 'failure_date', 'reportDate']:
+                    if field in doc:
+                        return str(doc[field])
+                return ''
+            sorted_data = sorted(filtered_data, key=get_date, reverse=True)
+            original_question = analysis.get('original_question', '')
+            if 'recent' in original_question.lower():
+                # Filter to current week (Monday to today)
+                today = datetime.datetime.now().date()
+                monday = today - datetime.timedelta(days=today.weekday())
+                def is_this_week(doc):
+                    date_str = get_date(doc)
+                    try:
+                        date_obj = datetime.datetime.fromisoformat(date_str[:10]).date()
+                        return monday <= date_obj <= today
+                    except Exception:
+                        return False
+                sorted_data = [doc for doc in sorted_data if is_this_week(doc)]
+                response_parts.append(f"Recent interventions by {analysis['filters']['technician']}:")
+            else:
+                response_parts.append(f"Interventions by {analysis['filters']['technician']}:")
+            for doc in sorted_data:
+                date = ''
+                for field in ['date', 'breakdown_date', 'maintenance_date', 'failure_date', 'reportDate']:
+                    if field in doc:
+                        date = str(doc[field])
+                        break
+                issue = ''
+                for field in ['description', 'issue', 'problem', 'failure_description', 'breakdown_reason']:
+                    if field in doc:
+                        issue = str(doc[field])
+                        break
+                time_spent = ''
+                for field in ['timeSpent', 'time_spent', 'repair_time', 'maintenance_time', 'duration']:
+                    if field in doc:
+                        time_spent = str(doc[field])
+                        break
+                response_parts.append(f"- Date: {date} | Issue: {issue} | Time Spent: {time_spent} minutes")
+            return "\n".join(response_parts)
         # If technician filter is present, list interventions for that technician
         if 'technician' in analysis['filters']:
             technician = analysis['filters']['technician'].replace(' ', '').lower()
@@ -1483,6 +1701,109 @@ def format_response(data, analysis):
     
     # Handle other types of data
     if isinstance(data, list):
+        # --- DEFECTS-ONLY LOGIC: MUST BE FIRST ---
+        if 'defects' in analysis['metrics'] and 'production' not in analysis['metrics'] and analysis.get('date_info'):
+            total_defects = sum(d.get('defects', 0) for d in data)
+            date_str = analysis['date_info'].get('value')
+            print("[DEBUG] Returning from defects-only block")
+            return f"Total defects on {date_str}: {total_defects:.0f}"
+        # --- ORDER-SPECIFIC LOGIC (bulletproof) ---
+        if 'order' in analysis['filters'] and analysis.get('date_info'):
+            order_ref = str(analysis['filters']['order'])
+            date_str = analysis['date_info'].get('value')
+            filtered = []
+            for d in data:
+                doc_order = d.get('orderRef') or d.get('order_reference') or d.get('order')
+                if doc_order is not None and str(doc_order) == order_ref:
+                    doc_date = d.get('date', '') or d.get('productionDate', '')
+                    if doc_date.startswith(date_str):
+                        filtered.append(d)
+            print(f"[DEBUG] Filtered for order {order_ref} on {date_str}: {len(filtered)} records: {filtered}")
+            if filtered:
+                produced = sum(d.get('produced', 0) for d in filtered)
+                target = sum(d.get('productionTarget', d.get('target', 0)) for d in filtered)
+                completion = (produced / target * 100) if target else 0
+                print("[DEBUG] Returning from order-specific block")
+                return f"Order {order_ref} on {date_str}: produced {produced:.0f} units, target {target:.0f} units, completion {completion:.2f}%"
+            else:
+                print("[DEBUG] Returning from order-specific block: no data found")
+                return f"No data found for order {order_ref} on {date_str}."
+        # --- HOURLY BREAKDOWN LOGIC ---
+        if 'workshop' in analysis['filters'] and analysis.get('date_info') and (
+            'hour' in analysis['metrics'] or 'every hour' in analysis.get('original_question', '') or 'hour' in analysis.get('original_question', '')
+        ):
+            by_hour = {}
+            for d in data:
+                hour = d.get('hour')
+                if hour is None:
+                    date_str = d.get('date', '')
+                    if 'T' in date_str:
+                        hour = date_str.split('T')[1][:5]
+                if hour is None:
+                    continue
+                if hour not in by_hour:
+                    by_hour[hour] = {'produced': 0, 'defects': 0}
+                by_hour[hour]['produced'] += d.get('produced', 0)
+                by_hour[hour]['defects'] += d.get('defects', 0)
+            hour_lines = []
+            for h in sorted(by_hour.keys()):
+                hour_lines.append(f"Hour {h}: {by_hour[h]['produced']} units, {by_hour[h]['defects']} defects")
+            return "Production by hour:\n" + " | ".join(hour_lines)
+        # --- MONTHLY/RANGE SUMMARY LOGIC ---
+        if analysis.get('date_info') and analysis['date_info'].get('type') == 'relative_date' and isinstance(analysis['date_info'].get('value'), dict):
+            date_range = analysis['date_info']['value']
+            start_date = date_range.get('start')
+            end_date = date_range.get('end')
+            header = f"Performance Data from {start_date} to {end_date}"
+            total_produced = sum(d.get('produced', 0) for d in data)
+            total_defects = sum(d.get('defects', 0) for d in data)
+            total_target = sum(d.get('productionTarget', 0) for d in data)
+            defect_rate = (total_defects / total_produced * 100) if total_produced else 0
+            completion = (total_produced / total_target * 100) if total_target else 0
+            response_parts = [header]
+            response_parts.append(f"Total production: {total_produced:.0f} units")
+            response_parts.append(f"Total defects: {total_defects:.0f}")
+            response_parts.append(f"Defect rate: {defect_rate:.2f}%")
+            response_parts.append(f"Production target: {total_target:.0f} units")
+            response_parts.append(f"Target completion: {completion:.2f}%")
+            # Production by date
+            by_date = {}
+            for d in data:
+                date = d.get('date')
+                if date:
+                    if date not in by_date:
+                        by_date[date] = {'produced': 0, 'defects': 0}
+                    by_date[date]['produced'] += d.get('produced', 0)
+                    by_date[date]['defects'] += d.get('defects', 0)
+            if by_date:
+                date_lines = []
+                for date, vals in sorted(by_date.items()):
+                    date_lines.append(f"{date}: {vals['produced']:.0f} units, {vals['defects']:.0f} defects")
+                response_parts.append("\nProduction by date:")
+                response_parts.append(" | ".join(date_lines))
+            # Production by order
+            by_order = {}
+            for d in data:
+                order = d.get('orderRef') or d.get('order_reference') or d.get('order')
+                if order is not None:
+                    if order not in by_order:
+                        by_order[order] = {'produced': 0, 'target': 0}
+                    by_order[order]['produced'] += d.get('produced', 0)
+                    by_order[order]['target'] += d.get('productionTarget', 0)
+            if by_order:
+                order_lines = []
+                for order, vals in sorted(by_order.items(), key=lambda x: -x[1]['produced']):
+                    target = vals['target']
+                    produced = vals['produced']
+                    percent = (produced / target * 100) if target else 0
+                    order_lines.append(f"Order {order}: {produced:.0f} units ({percent:.1f}% of target)")
+                response_parts.append("\nProduction by order:")
+                response_parts.append(" | ".join(order_lines))
+            return "\n".join(response_parts)
+        # If the user asked for the sum of production only, return just that
+        if analysis.get('math_operation') == 'sum' and 'production' in analysis['metrics']:
+            total_production = sum(d.get('produced', 0) for d in data)
+            return f"Total production: {total_production:.0f} units"
         if analysis['math_operation']:
             if analysis['math_operation'] == 'average':
                 for metric in analysis['metrics']:
@@ -1492,20 +1813,93 @@ def format_response(data, analysis):
                     elif metric == 'defects':
                         avg = sum(d.get('defects', 0) for d in data) / len(data)
                         response_parts.append(f"Average defects: {avg:.2f}")
+            elif analysis['math_operation'] == 'rate':
+                if 'performance' in analysis['metrics'] or 'efficiency' in analysis['metrics']:
+                    total_production = sum(d.get('produced', 0) for d in data)
+                    total_target = sum(d.get('productionTarget', 0) for d in data)
+                    if total_target > 0:
+                        efficiency = (total_production / total_target) * 100
+                        response_parts.append(f"Efficiency: {efficiency:.2f}%")
+                        response_parts.append(f"Total production: {total_production} units")
+                        response_parts.append(f"Production target: {total_target} units")
+                    else:
+                        response_parts.append(f"Total production: {total_production} units")
         else:
             # Summarize the data
             total_records = len(data)
-            response_parts.append(f"Found {total_records} records")
-            
+            # REMOVED: response_parts.append(f"Found {total_records} records")
             if 'production' in analysis['metrics']:
                 total_production = sum(d.get('produced', 0) for d in data)
                 response_parts.append(f"Total production: {total_production} units")
-            
             if 'defects' in analysis['metrics']:
                 total_defects = sum(d.get('defects', 0) for d in data)
                 response_parts.append(f"Total defects: {total_defects}")
     
-    return " | ".join(response_parts)
+        # --- MONTHLY PERFORMANCE FOR ORDER LOGIC ---
+        if 'order' in analysis['filters'] and (
+            'monthly' in analysis.get('original_question', '').lower() or 'month' in analysis.get('original_question', '').lower()
+        ):
+            order_ref = analysis['filters']['order']
+            # Group by date for this order
+            by_date = {}
+            for d in data:
+                doc_order = d.get('orderRef') or d.get('order_reference') or d.get('order')
+                if doc_order is not None and str(doc_order) == str(order_ref):
+                    date = d.get('date')
+                    if date:
+                        if date not in by_date:
+                            by_date[date] = {'produced': 0, 'defects': 0}
+                        by_date[date]['produced'] += d.get('produced', 0)
+                        by_date[date]['defects'] += d.get('defects', 0)
+            if by_date:
+                date_lines = []
+                for date, vals in sorted(by_date.items()):
+                    date_lines.append(f"{date}: {vals['produced']:.0f} units, {vals['defects']:.0f} defects")
+                response = "Production by date:\n" + " | ".join(date_lines)
+                # Add order summary
+                total_produced = sum(vals['produced'] for vals in by_date.values())
+                total_target = sum(d.get('productionTarget', 0) for d in data if str(d.get('orderRef', d.get('order_reference', d.get('order', '')))) == str(order_ref))
+                percent = (total_produced / total_target * 100) if total_target else 0
+                response += f"\n\nProduction by order:\nOrder {order_ref}: {total_produced:.0f} units ({percent:.1f}% of target)"
+                return response
+            else:
+                return f"No data found for order {order_ref}."
+    
+        # --- MONTHLY PERFORMANCE FOR ORDER LOGIC (safe) ---
+        if (
+            'order' in analysis['filters']
+            and ('monthly' in analysis.get('original_question', '').lower() or 'month' in analysis.get('original_question', '').lower())
+            and 'hour' not in analysis['filters']
+            and 'workshop' not in analysis['filters']
+        ):
+            order_ref = analysis['filters']['order']
+            # Group by date for this order
+            by_date = {}
+            for d in data:
+                doc_order = d.get('orderRef') or d.get('order_reference') or d.get('order')
+                if doc_order is not None and str(doc_order) == str(order_ref):
+                    date = d.get('date')
+                    if date:
+                        if date not in by_date:
+                            by_date[date] = {'produced': 0, 'defects': 0}
+                        by_date[date]['produced'] += d.get('produced', 0)
+                        by_date[date]['defects'] += d.get('defects', 0)
+            if by_date:
+                date_lines = []
+                for date, vals in sorted(by_date.items()):
+                    date_lines.append(f"{date}: {vals['produced']:.0f} units, {vals['defects']:.0f} defects")
+                response = "Production by date:\n" + " | ".join(date_lines)
+                # Add order summary
+                total_produced = sum(vals['produced'] for vals in by_date.values())
+                total_target = sum(d.get('productionTarget', 0) for d in data if str(d.get('orderRef', d.get('order_reference', d.get('order', '')))) == str(order_ref))
+                percent = (total_produced / total_target * 100) if total_target else 0
+                response += f"\n\nProduction by order:\nOrder {order_ref}: {total_produced:.0f} units ({percent:.1f}% of target)"
+                return response
+            else:
+                return f"No data found for order {order_ref}."
+    
+    print("[DEBUG] Returning from format_response: default return")
+    return " | ".join(response_parts) if response_parts else "Could not format the calculation results."
 
 def create_failure_summary(failures, failure_fields=None):
     """Create a summary of failure data for better readability with flexible field names"""
@@ -1696,12 +2090,12 @@ def query_database(analysis):
                 # Special handling for different query types
                 if 'failures' in analysis['metrics'] and analysis['math_operation'] == 'distribution':
                     # Get all failures first, then group them for distribution calculation
-                    result = list(coll.find().limit(100))  # Limit to reasonable number
+                    result = list(coll.find())  # Removed limit
                 elif 'efficiency' in analysis['metrics'] and analysis.get('calculation_type') == 'efficiency_rate':
                     # Get a reasonable sample for efficiency calculations
-                    result = list(coll.find(query).limit(100))  # More data for better analysis
+                    result = list(coll.find(query))  # Removed limit
                 else:
-                    result = list(coll.find(query).limit(50))
+                    result = list(coll.find(query))  # Removed limit
                     
                 if result:
                     print(f"Found {len(result)} documents in {collection_name}")
@@ -1723,7 +2117,7 @@ def query_database(analysis):
                 for collection_name in collections_to_try:
                     try:
                         # Simply get all documents in collection (typically failure collections are small)
-                        result = list(db[collection_name].find().limit(50))
+                        result = list(db[collection_name].find())  # Removed limit
                         if result:
                             print(f"Found {len(result)} failure documents in {collection_name}")
                             data = result
@@ -1761,7 +2155,7 @@ def query_database(analysis):
                                     flexible_query = {"$or": or_conditions}
                                     
                                     # Try this query
-                                    result = list(db[coll_name].find(flexible_query))
+                                    result = list(db[coll_name].find(flexible_query))  # Removed limit
                                     if result:
                                         print(f"Found {len(result)} documents in {coll_name} with flexible technician query")
                                         data = result
@@ -1796,7 +2190,7 @@ def query_database(analysis):
                                     
                                     # Try this query
                                     print(f"Trying order search with fields: {order_fields}")
-                                    result = list(db[coll_name].find(flexible_query).limit(10))
+                                    result = list(db[coll_name].find(flexible_query))  # Removed limit
                                     if result:
                                         print(f"Found {len(result)} documents in {coll_name} with flexible order query")
                                         data = result
@@ -2063,13 +2457,45 @@ def get_guidance(query):
 
 @app.route("/chatbot", methods=["POST"])
 def chatbot():
+    import sys
+    response = ""
+    print("[DEBUG] chatbot route hit")
     data = request.get_json()
     message = data.get("message", "").lower()
     user_id = data.get("user_id", "anonymous")
+    print(f"[DEBUG] message: {message}")
+    sys.stdout.flush()
+    print("[DEBUG] before analyze_question")
+    sys.stdout.flush()
+    try:
+        analysis = analyze_question(message)
+    except Exception as e:
+        print(f"[DEBUG] Exception in analyze_question: {e}")
+        sys.stdout.flush()
+        raise
+    print("[DEBUG] after analyze_question")
+    sys.stdout.flush()
+    analysis['original_question'] = message
+    # Compute is_db_query as a boolean before any return
+    is_db_query = bool(
+        analysis['metrics']
+        or analysis['filters']
+        or analysis.get('date_info')
+        or analysis.get('math_operation')
+        or analysis.get('calculation_type')
+        or analysis.get('comparison')
+    )
+    # Force database query if technician filter is present
+    if 'technician' in analysis['filters']:
+        is_db_query = True
+    print(f"[DEBUG] analysis.filters: {analysis['filters']}, is_db_query: {is_db_query}, message: {message}")
+    sys.stdout.flush()
 
     # Role-based greeting feature
     greeting_words = {"hi", "hello", "hey"}
     if message.strip() in greeting_words:
+        print("[DEBUG] returning: greeting branch")
+        sys.stdout.flush()
         # Try to get the user's role from the database if user_id is provided
         role = None
         if user_id and user_id != "anonymous" and mongodb_available and db is not None:
@@ -2101,6 +2527,8 @@ def chatbot():
                 print(f"Saved greeting conversation for user {user_id}, id: {result.inserted_id}")
             except Exception as e:
                 print(f"Error saving greeting conversation: {str(e)}")
+        print("[DEBUG] return: greeting response")
+        sys.stdout.flush()
         return {"response": response}
 
     # Existing logic follows...
@@ -2108,8 +2536,102 @@ def chatbot():
     prediction = intent_predictor.predict(message)
     intent = prediction['intent']
     confidence = prediction['confidence']
+    entities = prediction.get('entities', {})
     
     print(f"Intent: {intent}, Confidence: {confidence:.4f}")
+
+    # Backend fallback for user/role queries if intent is not guidance
+    user_keywords = ['supervisor', 'technician', 'manager']
+    user_actions = ['how many', 'number', 'count', 'list', 'show', 'names', 'who']
+    if (any(role in message for role in user_keywords) and
+        any(action in message for action in user_actions) and
+        intent != 'guidance'):
+        role = next((r for r in user_keywords if r in message), None)
+        if role:
+            if any(word in message for word in ['how many', 'number', 'count', 'total']):
+                attribute = 'count'
+            elif any(word in message for word in ['name', 'list', 'show']):
+                attribute = 'names'
+            else:
+                attribute = 'count'
+            if attribute == 'count':
+                count = db["new_data.users"].count_documents({"role": {"$regex": f"^{role}$", "$options": "i"}})
+                response = f"There are {count} {role}{'s' if count != 1 else ''}."
+            elif attribute == 'names':
+                users = db["new_data.users"].find({"role": {"$regex": f"^{role}$", "$options": "i"}})
+                names = []
+                for u in users:
+                    name = u.get("full_name") or u.get("username") or "Unknown"
+                    names.append(name)
+                response = f"{role.title()}s: {', '.join(names)}"
+            else:
+                count = db["new_data.users"].count_documents({"role": {"$regex": f"^{role}$", "$options": "i"}})
+                response = f"There are {count} {role}{'s' if count != 1 else ''}."
+            # Save to DB
+    if mongodb_available and db is not None:
+        try:
+            current_time = datetime.now(UTC)
+            conversation_doc = {
+                "user_id": user_id,
+                "question": message,
+                "response": response,
+                "timestamp": current_time
+                 }
+            db.chatbot_conversations.insert_one(conversation_doc)
+        except Exception as e:
+            print(f"Error saving chatbot conversation: {str(e)}")
+            print("[DEBUG] return: user/role branch")
+            sys.stdout.flush()
+            return {"response": response}
+
+    # User email query support
+    if any(word in message for word in ['email', 'mail', 'address']):
+        import re
+        name_query = None
+        # Try to extract name after 'of'
+        name_match = re.search(r'(?:email|mail|address)\s*(?:of)?\s*([a-zA-Z0-9_ .\'-]+)', message)
+        if name_match:
+            name_query = name_match.group(1).strip()
+        else:
+            # Try to extract from "'s email" pattern (improved)
+            name_match = re.search(r"([a-zA-Z0-9_.'-]+)'s\s*(?:email|mail|address)", message)
+            if name_match:
+                name_query = name_match.group(1).strip()
+            else:
+                # Try to extract the last word before 'email/mail/address'
+                name_match = re.search(r'([a-zA-Z0-9_ .\'-]+)\s+(?:email|mail|address)', message)
+                if name_match:
+                    name_query = name_match.group(1).strip()
+        if name_query:
+            user = db["new_data.users"].find_one({
+                "$or": [
+                    {"full_name": {"$regex": name_query, "$options": "i"}},
+                    {"username": {"$regex": name_query, "$options": "i"}}
+                ]
+            })
+            if user and "email" in user:
+                response = f"{name_query.title()}'s email is: {user['email']}"
+            else:
+                response = f"Sorry, I couldn't find an email for {name_query.title()}."
+        else:
+            response = "Sorry, I couldn't extract the name from your question."
+        # Save to DB
+        if mongodb_available and db is not None:
+            try:
+                current_time = datetime.now(UTC)
+                conversation_doc = {
+                    "user_id": user_id,
+                    "question": message,
+                    "response": response,
+                    "timestamp": current_time
+                }
+                result = db.chatbot_conversations.insert_one(conversation_doc)
+                print(f"Saved email conversation for user {user_id}, id: {result.inserted_id}")
+            except Exception as e:
+                print(f"Error saving email conversation: {str(e)}")
+        print("[DEBUG] return: email branch")
+        sys.stdout.flush()
+        return {"response": response}
 
     # Fallback: If message starts with 'how to', 'how do i', or confidence is low, check guidance
     howto_starts = (
@@ -2162,9 +2684,9 @@ def chatbot():
     # Continue with existing logic for database queries
     analysis = analyze_question(message)
     analysis['original_question'] = message
+    print(f"[DEBUG] analysis.filters: {analysis['filters']}, is_db_query: {is_db_query}, message: {message}")
+    sys.stdout.flush()
 
-    response = ""
-    
     # Check if the query is likely NOT a database query (minimal metrics/filters)
     is_db_query = (
         analysis['metrics']
@@ -2174,49 +2696,118 @@ def chatbot():
         or analysis.get('calculation_type')
         or analysis.get('comparison')
     )
+    # Ensure that if intent is 'failures' and a technician filter is present, always query the database
+    if intent == 'failures' and 'technician' in analysis['filters']:
+        is_db_query = True
 
-    if not is_db_query:
-        # Attempt to provide guidance
-        guidance_text = ""
-        try:
-            with open(GUIDANCE_FILE_PATH, 'r') as f:
-                    guidance_text = f.read()
-            response = get_guidance(message, guidance_text)
-        except FileNotFoundError:
-            response = f"Error: Guidance file not found at {GUIDANCE_FILE_PATH}"
-            print(response)
-        except Exception as e:
-            response = f"Error reading guidance file: {str(e)}"
-            print(response)
+    # Guidance and non-guidance phrase detection
+    guidance_starts = (
+        message.strip().startswith('how to') or
+        message.strip().startswith('how do i') or
+        message.strip().startswith('how can i') or
+        message.strip().startswith('how should i')
+    )
+    non_guidance_starts = (
+        message.strip().startswith('what') or
+        message.strip().startswith('show') or
+        message.strip().startswith('list') or
+        message.strip().startswith('give me')
+    )
+    print(f"[DEBUG] intent: {intent}, confidence: {confidence}, guidance_starts: {guidance_starts}, non_guidance_starts: {non_guidance_starts}, is_db_query: {is_db_query}")
 
-        if not response:
-            # Fallback if no specific guidance found and not a db query
-            response = "Sorry, I couldn't find a guide for that. Please rephrase or check the app documentation."
+    response = ""
+    # Refined fallback: If message starts with a guidance phrase and is_db_query is False, always fetch from guidance
+    if guidance_starts and not is_db_query:
+        response = get_guidance(message)
+        # Only return if guidance is found (not the default sorry message)
+        if response and not response.lower().startswith("i'm sorry"):
+            if mongodb_available and db is not None:
+                try:
+                    current_time = datetime.now(UTC)
+                    print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
+                    conversation_doc = {
+                        "user_id": user_id,
+                        "question": message,
+                        "response": response,
+                        "timestamp": current_time
+                    }
+                    result = db.chatbot_conversations.insert_one(conversation_doc)
+                    print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
+                except Exception as e:
+                    print(f"Error saving guidance conversation: {str(e)}")
+            return {"response": response}
 
+    # Only trigger guidance fallback if (intent == 'guidance') OR (confidence is very low AND guidance_starts and not non_guidance_starts)
+    guidance_trigger = (
+        intent == 'guidance' or
+        (confidence < 0.4 and guidance_starts and not non_guidance_starts)
+    )
+    if not is_db_query and guidance_trigger:
+        response = get_guidance(message)
+        # Only return if guidance is found (not the default sorry message)
+        if response and not response.lower().startswith("i'm sorry"):
+            if mongodb_available and db is not None:
+                try:
+                    current_time = datetime.now(UTC)
+                    print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
+                    conversation_doc = {
+                        "user_id": user_id,
+                        "question": message,
+                        "response": response,
+                        "timestamp": current_time
+                    }
+                    result = db.chatbot_conversations.insert_one(conversation_doc)
+                    print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
+                except Exception as e:
+                    print(f"Error saving guidance conversation: {str(e)}")
+            return {"response": response}
+
+    # Refined fallback: Only trigger guidance if message starts with a guidance phrase, does NOT start with a non-guidance phrase, and is_db_query is False
+    if guidance_starts and not non_guidance_starts and not is_db_query:
+        print("[DEBUG] about to call get_guidance")
+        sys.stdout.flush()
+        response = get_guidance(message)
+        # Only return if guidance is found (not the default sorry message)
+        if response and not response.lower().startswith("i'm sorry"):
+            if mongodb_available and db is not None:
+                try:
+                    current_time = datetime.now(UTC)
+                    print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
+                    conversation_doc = {
+                        "user_id": user_id,
+                        "question": message,
+                        "response": response,
+                        "timestamp": current_time
+                    }
+                    result = db.chatbot_conversations.insert_one(conversation_doc)
+                    print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
+                except Exception as e:
+                    print(f"Error saving guidance conversation: {str(e)}")
+            return {"response": response}
+
+    # Otherwise, always try DB if is_db_query or not response
     if is_db_query or not response or "Error: Guidance file not found" in response:
-        # If it's a DB query, or guidance wasn't found/had errors, proceed with DB query logic
+        print("[DEBUG] about to call query_database")
+        sys.stdout.flush()
         response = query_database(analysis)
-    
-    # Remove <br> and <br><br> from the response if present
-    if isinstance(response, str):
-        response = response.replace('<br><br>', ' ').replace('<br>', ' ')
-    
-    # Save the conversation to MongoDB
-    if mongodb_available and db is not None:
-        try:
-            current_time = datetime.now(UTC)
-            print(f"Saving conversation for user {user_id} at {current_time.isoformat()}")
-            conversation_doc = {
-                "user_id": user_id,
-                "question": message,
-                "response": response,
-                "timestamp": current_time
-            }
-            result = db.chatbot_conversations.insert_one(conversation_doc)
-            print(f"Saved chatbot conversation for user {user_id}, id: {result.inserted_id}")
-        except Exception as e:
-            print(f"Error saving chatbot conversation: {str(e)}")
-    
+        # Remove <br> and <br><br> from the response if present
+        if isinstance(response, str):
+            response = response.replace('<br><br>', ' ').replace('<br>', ' ')
+        # Save the conversation to MongoDB
+        if mongodb_available and db is not None:
+            try:
+                current_time = datetime.now(UTC)
+                print(f"Saving conversation for user {user_id} at {current_time.isoformat()}")
+                conversation_doc = {
+                    "user_id": user_id,
+                    "question": message,
+                    "response": response,
+                    "timestamp": current_time
+                }
+                result = db.chatbot_conversations.insert_one(conversation_doc)
+                print(f"Saved chatbot conversation for user {user_id}, id: {result.inserted_id}")
+            except Exception as e:
+                print(f"Error saving chatbot conversation: {str(e)}")
     return {"response": response}
 
 @app.route("/chatbot/diagnostics", methods=["GET"])
@@ -2684,7 +3275,7 @@ def get_defect_distribution(analysis):
                             defect_fields['count'].append(field)
                 
                 # Query the database
-                documents = list(db[coll_name].find(query).limit(100))
+                documents = list(db[coll_name].find(query))  # Removed limit
                 
                 if documents:
                     data_found = True
@@ -2912,7 +3503,7 @@ def get_specific_defect_info(analysis):
                 
                 # Query the database
                 print(f"Querying {coll_name} for {defect_type} with query: {combined_query}")
-                documents = list(db[coll_name].find(combined_query).limit(100))
+                documents = list(db[coll_name].find(combined_query))  # Removed limit
                 
                 if documents:
                     data_found = True
@@ -3185,7 +3776,7 @@ def get_performance_data(analysis):
             if collection_name in available_collections:
                 try:
                     print(f"Querying collection: {collection_name} with comprehensive query")
-                    current_docs = list(db[collection_name].find(comprehensive_query).limit(100))
+                    current_docs = list(db[collection_name].find(comprehensive_query))  # Removed limit
                     if current_docs:
                         print(f"Found {len(current_docs)} documents in {collection_name}")
                         documents = current_docs
@@ -3202,7 +3793,7 @@ def get_performance_data(analysis):
                 if collection_name in available_collections:
                     try:
                         print(f"Querying collection: {collection_name} with original query")
-                        current_docs = list(db[collection_name].find(query).limit(100))
+                        current_docs = list(db[collection_name].find(query))  # Removed limit
                         if current_docs:
                             print(f"Found {len(current_docs)} documents in {collection_name}")
                             documents = current_docs
@@ -3229,7 +3820,7 @@ def get_performance_data(analysis):
                 if collection_name in available_collections:
                     try:
                         print(f"Trying flexible workshop query in {collection_name}")
-                        workshop_docs = list(db[collection_name].find(flexible_workshop_query).limit(100))
+                        workshop_docs = list(db[collection_name].find(flexible_workshop_query))  # Removed limit
                         if workshop_docs:
                             print(f"Found {len(workshop_docs)} documents with flexible workshop query")
                             
@@ -3298,7 +3889,7 @@ def get_performance_data(analysis):
                             
                             if has_workshop_field:
                                 print(f"Collection {collection_name} has workshop fields, trying query")
-                                all_docs = list(db[collection_name].find(flexible_workshop_query).limit(50))
+                                all_docs = list(db[collection_name].find(flexible_workshop_query))  # Removed limit
                                 if all_docs:
                                     print(f"Found {len(all_docs)} workshop documents in {collection_name}")
                                     if hour_value:
@@ -3456,8 +4047,8 @@ def get_performance_data(analysis):
                 
         # Process the results if we have documents
         if not documents:
+            print("[DEBUG] Returning from get_performance_data: no documents found")
             return "No performance data found matching your criteria."
-            
         # Determine the fields available in the documents
         sample_doc = documents[0]
         fields = list(sample_doc.keys())
@@ -3673,10 +4264,13 @@ def get_performance_data(analysis):
                 order_lines.append(order_line)
             response_parts.append(" | ".join(order_lines[:5]))  # Show top 5
         
-        # Add sample size information
-        response_parts.append(f"\nBased on {len(documents)} records from {collection_used or 'unknown'} collection")
+        # --- SUM-ONLY LOGIC FOR PRODUCTION ---
+        if analysis.get('math_operation') == 'sum' and 'production' in analysis['metrics']:
+            total_produced = sum(safe_get_numeric(doc, [production_field, 'produced', 'production', 'output']) for doc in documents)
+            return f"Total production: {total_produced:.0f} units"
         
-        return "\n".join(response_parts)
+        print(f"[DEBUG] About to call format_response with {len(documents)} docs, analysis: {analysis}")
+        return format_response(documents, analysis)
     
     except Exception as e:
         print(f"Error retrieving performance data: {e}")

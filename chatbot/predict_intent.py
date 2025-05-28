@@ -139,7 +139,8 @@ class IntentPredictor:
             'performance': 0,
             'defects': 0,
             'failures': 0,
-            'orders': 0
+            'orders': 0,
+            'user_info': 0  
         }
         
         # Define keywords for each intent
@@ -147,7 +148,8 @@ class IntentPredictor:
             'performance': ['production', 'output', 'efficiency', 'performance', 'produced', 'units', 'productivity', 'yield'],
             'defects': ['defect', 'quality', 'issue', 'problem', 'rejection', 'fault', 'error', 'defective'],
             'failures': ['machine', 'failure', 'breakdown', 'maintenance', 'repair', 'equipment', 'malfunction'],
-            'orders': ['order', 'delivery', 'shipment', 'status', 'tracking', 'shipped', 'completed']
+            'orders': ['order', 'delivery', 'shipment', 'status', 'tracking', 'shipped', 'completed'],
+            'user_info': ['supervisor', 'technician', 'manager', 'user', 'employee', 'staff', 'personnel', 'operator']
         }
         
         # Count matches for each intent

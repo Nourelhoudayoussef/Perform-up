@@ -74,7 +74,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     } catch (e) {
       print('Error loading chat history: $e');
       // If there's an error, show welcome message
-      _addWelcomeMessage();
+    _addWelcomeMessage();
       
       // Show a snackbar with the error message
       if (mounted) {

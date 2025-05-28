@@ -54,3 +54,11 @@ Give me information about the latest orders,orders
 Track order #98765,orders
 Show me pending orders,orders
 What's the completion rate of this month's orders?,orders
+How many supervisors are there?,user_info
+List all technicians,user_info
+Show me all managers,user_info
+Who are the supervisors?,user_info
+Give me the names of all technicians,user_info
+How many managers do we have?,user_info
+List supervisor names,user_info
+Show technician details,user_info
