@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:convert';
 import '../../services/chatbot_service.dart';
 
 class ChatbotScreen extends StatefulWidget {
@@ -52,16 +53,21 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           for (var conversation in conversations) {
             final timestamp = conversation['timestamp'] ?? '';
             print('Adding conversation from: $timestamp');
+            print('Conversation data: ${json.encode(conversation)}'); // Debug log
+            
+            // Check types of question and response
+            print('Question type: ${conversation['question'].runtimeType}');
+            print('Response type: ${conversation['response'].runtimeType}');
             
             // Add user question
             _messages.add(ChatMessage(
-              text: conversation['question'] ?? '',
+              text: conversation['question'] is String ? conversation['question'] : json.encode(conversation['question']),
               isUser: true,
             ));
             
             // Add chatbot response
             _messages.add(ChatMessage(
-              text: conversation['response'] ?? '',
+              text: conversation['response'] is String ? conversation['response'] : json.encode(conversation['response']),
               isUser: false,
             ));
           }

@@ -561,11 +561,17 @@ def analyze_question(text):
         'workshop': r'workshop\s*(\d+)|(\d+)\s*(?:st|nd|rd|th)?\s*workshop|work\s*shop\s*(\d+)',
         'machine': r'machine\s+(?:id|reference|ref|number)?\s*([a-zA-Z0-9\-]+)|([a-zA-Z0-9\-]+)\s*machine',
         'technician': r'(?:technician|handled by|fixed by|repaired by|engineer)\s+([^\s,.?!][^,.?!]*)',
-        'order': r'order\s*(?:reference|ref)?\s*#?\s*(\d+)|order\s*(?:number|num|no)\s*#?\s*(\d+)',
+        'order': r'order\s*(?:reference|ref)?\s*#?(\d+)|order\s*(?:number|num|no)\s*#?(\d+)',
         'chain': r'chain\s*(\d+)|chain\s*([a-zA-Z0-9\-]+)|(\d+)\s*(?:st|nd|rd|th)?\s*chain',
         'hour': r'(?:at|during|hour)\s*(\d{1,2})(?:\s*(?:am|pm|h|hour|:00))?|(\d{1,2})\s*(?:am|pm|h|hour|o\'clock)'
     }
     
+    # --- DEFECT QUERY GUARD FOR TECHNICIAN FILTER ---
+    defect_query_types = {'defect_types', 'defect_names', 'defect_distribution', 'defect_statistics', 'specific_defect'}
+    is_defect_query = (
+        'defects' in analysis['metrics'] and analysis.get('defect_query_type') in defect_query_types
+    )
+
     # Check for workshop mentions in comparison contexts
     if isinstance(analysis['comparison'], dict) and analysis['comparison'].get('entity_type') == 'workshop':
         workshop_ids = analysis['comparison'].get('ids', [])
@@ -575,6 +581,9 @@ def analyze_question(text):
             
     # Extract all filters except machine if it's a general machine failures query
     for filter_type, pattern in filter_patterns.items():
+        # --- SKIP TECHNICIAN FILTER FOR DEFECT QUERIES ---
+        if filter_type == 'technician' and is_defect_query:
+            continue
         # Skip machine filter for general machine failures query
         if filter_type == 'machine' and 'failures' in analysis['metrics'] and not re.search(r'for machine|by machine|specific machine', text, re.IGNORECASE):
             print("Query is about general machine failures, not filtering by specific machine")
@@ -626,15 +635,19 @@ def analyze_question(text):
     
     # Fallback: If the question contains 'by <technician name>' or 'recorded by <name>' or 'interventions by <name>' and technician filter is not set, extract it
     if 'technician' not in analysis['filters']:
-        # Match 'interventions' followed anywhere by 'by' or 'recorded by' and a name
-        by_match = re.search(r'interventions.*?(?:recorded by|by)\s+([a-zA-Z0-9_\- ]+)', text, re.IGNORECASE)
-        if not by_match:
-            # Also match 'recorded by <name>' or 'by <name>' anywhere
-            by_match = re.search(r'(?:recorded by|by)\s+([a-zA-Z0-9_\- ]+)', text, re.IGNORECASE)
-        if by_match:
-            tech_name = by_match.group(1).strip()
-            if tech_name:
-                analysis['filters']['technician'] = tech_name
+        # --- SKIP TECHNICIAN FALLBACK FOR DEFECT QUERIES ---
+        if is_defect_query:
+            pass  # Do not extract technician for defect queries
+        else:
+            # Match 'interventions' followed anywhere by 'by' or 'recorded by' and a name
+            by_match = re.search(r'interventions.*?(?:recorded by|by)\s+([a-zA-Z0-9_\- ]+)', text, re.IGNORECASE)
+            if not by_match:
+                # Also match 'recorded by <name>' or 'by <name>' anywhere
+                by_match = re.search(r'(?:recorded by|by)\s+([a-zA-Z0-9_\- ]+)', text, re.IGNORECASE)
+            if by_match:
+                tech_name = by_match.group(1).strip()
+                if tech_name:
+                    analysis['filters']['technician'] = tech_name
 
     # Fallback: If the question contains 'machine' followed by a reference and machine filter is not set, extract it
     if 'machine' not in analysis['filters']:
@@ -665,6 +678,23 @@ def analyze_question(text):
         analysis['metrics'].discard('defects')
         analysis['metrics'].add('failures')
     
+    # Fallback: If the question contains 'defect distribution' or 'distribution by type' and defect_query_type is not set, set it
+    if not analysis.get('defect_query_type'):
+        lowered = text.lower()
+        if 'defect distribution' in lowered or 'distribution by type' in lowered or 'defects by type' in lowered:
+            analysis['defect_query_type'] = 'defect_distribution'
+            print("[DEBUG] Fallback: Set defect_query_type to 'defect_distribution'")
+
+    # --- FINAL DEFECT QUERY GUARD: REMOVE TECHNICIAN FILTER IF DEFECT QUERY ---
+    defect_query_types = {'defect_types', 'defect_names', 'defect_distribution', 'defect_statistics', 'specific_defect'}
+    is_defect_query = (
+        'defects' in analysis['metrics'] and analysis.get('defect_query_type') in defect_query_types
+    )
+    if is_defect_query and 'technician' in analysis['filters']:
+        del analysis['filters']['technician']
+        print("[DEBUG] Technician filter forcibly removed for defect query:", analysis['filters'])
+    else:
+        print("[DEBUG] Final guard: is_defect_query =", is_defect_query, "filters =", analysis['filters'])
     return analysis
 
 def perform_calculation(data, analysis):
@@ -1135,7 +1165,7 @@ def format_calculation_response(calc_results):
         return " | ".join(response_parts)
     
     # Special handling for efficiency rate results
-    elif 'efficiency_rates' in calc_results:
+    if 'efficiency_rates' in calc_results:
         overall_rate = calc_results.get('overall_rate', 0)
         time_period = calc_results.get('time_period', 'hour')
         sample_size = calc_results.get('sample_size', 0)
@@ -1159,7 +1189,7 @@ def format_calculation_response(calc_results):
         
         if rates:
             response_parts.append("Top production rates:")
-            for i, rate in enumerate(rates[:3]):  # Show top 3
+            for i, rate in enumerate(rates[:3]):
                 date = rate.get('date', 'unknown')
                 prod_rate = rate.get('production_rate', 0)
                 production = rate.get('production', 0)
@@ -1290,13 +1320,21 @@ def format_calculation_response(calc_results):
                 response_parts.append(f"{metric.replace('_', ' ').title()}: {value:.2f}")
     
     # Special handling for hourly efficiency breakdown
-    if 'hourly_efficiency' in calc_results:
+    if 'hourly_efficiency' in calc_results and calc_results.get('time_period') == 'hour':
         overall_rate = calc_results.get('overall_rate', 0)
         sample_size = calc_results.get('sample_size', 0)
-        response_parts.append(f"Hourly Efficiency Rate (based on {sample_size} hours):")
+        response_parts = [f"Hourly Efficiency Rate (based on {sample_size} hours):"]
         hourly = calc_results['hourly_efficiency']
         for hour, eff in sorted(hourly.items()):
             response_parts.append(f"Hour {hour}: {eff:.2f}%")
+        response_parts.append(f"Overall efficiency: {overall_rate:.2f}%")
+        return " | ".join(response_parts)
+
+    # If only overall_rate is present (no hourly breakdown), return general efficiency
+    if 'overall_rate' in calc_results and calc_results.get('time_period') != 'hour':
+        overall_rate = calc_results.get('overall_rate', 0)
+        sample_size = calc_results.get('sample_size', 0)
+        response_parts = [f"Efficiency Rate Analysis (based on {sample_size} records):"]
         response_parts.append(f"Overall efficiency: {overall_rate:.2f}%")
         return " | ".join(response_parts)
     
@@ -1824,6 +1862,18 @@ def format_response(data, analysis):
                         response_parts.append(f"Production target: {total_target} units")
                     else:
                         response_parts.append(f"Total production: {total_production} units")
+            elif analysis['math_operation'] == 'percentage':
+                # Handle percentage of defects compared to production
+                if 'defects' in analysis['metrics'] and 'production' in analysis['metrics']:
+                    total_defects = sum(d.get('defects', 0) for d in data)
+                    total_production = sum(d.get('produced', 0) for d in data)
+                    if total_production > 0:
+                        percent = (total_defects / total_production) * 100
+                        response_parts.append(f"Defects as a percentage of production: {percent:.2f}% ({total_defects} defects / {total_production} units)")
+                    else:
+                        response_parts.append("Cannot calculate percentage: total production is zero.")
+                else:
+                    response_parts.append("Cannot calculate percentage: required metrics not found.")
         else:
             # Summarize the data
             total_records = len(data)
@@ -2682,7 +2732,7 @@ def chatbot():
         return {"response": response}
 
     # Continue with existing logic for database queries
-    analysis = analyze_question(message)
+    
     analysis['original_question'] = message
     print(f"[DEBUG] analysis.filters: {analysis['filters']}, is_db_query: {is_db_query}, message: {message}")
     sys.stdout.flush()
