@@ -24,6 +24,13 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     _loadChatHistory();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Reload chat history when returning to this screen
+    _loadChatHistory();
+  }
+
   // Load chat history from the API
   Future<void> _loadChatHistory() async {
     setState(() {

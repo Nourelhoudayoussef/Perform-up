@@ -571,7 +571,7 @@ def analyze_question(text):
     is_defect_query = (
         'defects' in analysis['metrics'] and analysis.get('defect_query_type') in defect_query_types
     )
-
+    
     # Check for workshop mentions in comparison contexts
     if isinstance(analysis['comparison'], dict) and analysis['comparison'].get('entity_type') == 'workshop':
         workshop_ids = analysis['comparison'].get('ids', [])
@@ -2568,7 +2568,7 @@ def chatbot():
                 current_time = datetime.now(UTC)
                 print(f"Saving greeting conversation for user {user_id} at {current_time.isoformat()}")
                 conversation_doc = {
-                    "user_id": user_id,
+                    "user_id": str(user_id),  # Always store as string!
                     "question": message,
                     "response": response,
                     "timestamp": current_time
@@ -2622,7 +2622,7 @@ def chatbot():
         try:
             current_time = datetime.now(UTC)
             conversation_doc = {
-                "user_id": user_id,
+                "user_id": str(user_id),  # Always store as string!
                 "question": message,
                 "response": response,
                 "timestamp": current_time
@@ -2670,12 +2670,12 @@ def chatbot():
             try:
                 current_time = datetime.now(UTC)
                 conversation_doc = {
-                    "user_id": user_id,
+                    "user_id": str(user_id),  # Always store as string!
                     "question": message,
                     "response": response,
                     "timestamp": current_time
                 }
-                result = db.chatbot_conversations.insert_one(conversation_doc)
+                db.chatbot_conversations.insert_one(conversation_doc)
                 print(f"Saved email conversation for user {user_id}, id: {result.inserted_id}")
             except Exception as e:
                 print(f"Error saving email conversation: {str(e)}")
@@ -2700,7 +2700,7 @@ def chatbot():
                     current_time = datetime.now(UTC)
                     print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
                     conversation_doc = {
-                        "user_id": user_id,
+                        "user_id": str(user_id),  # Always store as string!
                         "question": message,
                         "response": response,
                         "timestamp": current_time
@@ -2720,7 +2720,7 @@ def chatbot():
                 current_time = datetime.now(UTC)
                 print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
                 conversation_doc = {
-                    "user_id": user_id,
+                    "user_id": str(user_id),  # Always store as string!
                     "question": message,
                     "response": response,
                     "timestamp": current_time
@@ -2776,7 +2776,7 @@ def chatbot():
                     current_time = datetime.now(UTC)
                     print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
                     conversation_doc = {
-                        "user_id": user_id,
+                        "user_id": str(user_id),  # Always store as string!
                         "question": message,
                         "response": response,
                         "timestamp": current_time
@@ -2801,7 +2801,7 @@ def chatbot():
                     current_time = datetime.now(UTC)
                     print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
                     conversation_doc = {
-                        "user_id": user_id,
+                        "user_id": str(user_id),  # Always store as string!
                         "question": message,
                         "response": response,
                         "timestamp": current_time
@@ -2824,7 +2824,7 @@ def chatbot():
                     current_time = datetime.now(UTC)
                     print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
                     conversation_doc = {
-                        "user_id": user_id,
+                        "user_id": str(user_id),  # Always store as string!
                         "question": message,
                         "response": response,
                         "timestamp": current_time
@@ -2849,7 +2849,7 @@ def chatbot():
                 current_time = datetime.now(UTC)
                 print(f"Saving conversation for user {user_id} at {current_time.isoformat()}")
                 conversation_doc = {
-                    "user_id": user_id,
+                    "user_id": str(user_id),  # Always store as string!
                     "question": message,
                     "response": response,
                     "timestamp": current_time
@@ -2962,7 +2962,7 @@ def get_conversation_history(user_id):
         conversations = list(db.chatbot_conversations.find(
             {"user_id": user_id},
             {"_id": 0}  # Exclude MongoDB _id field from results
-        ).sort("timestamp", -1).limit(50))  # Get latest 50 conversations
+        ).sort("timestamp", -1))  # Removed limit to get all conversations
         
         print(f"Found {len(conversations)} conversations")
         if conversations:
