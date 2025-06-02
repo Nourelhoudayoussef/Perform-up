@@ -525,6 +525,7 @@ class ApiService {
           'id': user['id']?.toString() ?? user['_id']?.toString() ?? '',
           'username': user['username'],
           'email': user['email'],
+          'role': user['role'],
         }).toList();
       } else if (response.statusCode == 403 || response.statusCode == 401) {
         print('Authentication failed (${response.statusCode}): Token may be expired');

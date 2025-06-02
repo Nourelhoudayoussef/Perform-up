@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:convert';
 import '../../services/chatbot_service.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:permission_handler/permission_handler.dart';
@@ -114,6 +115,15 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     }
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Reload chat history when returning to this screen
+    _loadChatHistory();
+  }
+
+  
+
   // Load chat history from the API
   Future<void> _loadChatHistory() async {
     setState(() {
@@ -135,15 +145,23 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           });
           
           for (var conversation in conversations) {
+            final timestamp = conversation['timestamp'] ?? '';
+            print('Adding conversation from: $timestamp');
+            print('Conversation data: ${json.encode(conversation)}'); // Debug log
+            
+            // Check types of question and response
+            print('Question type: ${conversation['question'].runtimeType}');
+            print('Response type: ${conversation['response'].runtimeType}');
+            
             // Add user question
             _messages.add(ChatMessage(
-              text: conversation['question'] ?? '',
+              text: conversation['question'] is String ? conversation['question'] : json.encode(conversation['question']),
               isUser: true,
             ));
             
             // Add chatbot response
             _messages.add(ChatMessage(
-              text: conversation['response'] ?? '',
+              text: conversation['response'] is String ? conversation['response'] : json.encode(conversation['response']),
               isUser: false,
             ));
           }
@@ -153,7 +171,8 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       }
     } catch (e) {
       print('Error loading chat history: $e');
-      _addWelcomeMessage();
+      // If there's an error, show welcome message
+    _addWelcomeMessage();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

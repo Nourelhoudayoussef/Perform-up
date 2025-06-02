@@ -423,6 +423,21 @@ def analyze_question(text):
         
         print(f"Detected comparison: {analysis['comparison']}")
     
+    # Patch: Robustly map repeated/recurring issue queries to 'failures' intent
+    repeated_issue_phrases = [
+        'most failures', 'most failed', 'highest failures', 'most breakdowns', 'most issues', 'most problems',
+        'repeated issues', 'recurring issues', 'repeat failures', 'repeat breakdowns', 'repeat problems', 'repeat issues',
+        'machines with repeated issues', 'machines with recurring issues', 'machines with issues more than once', 'machines with multiple failures'
+    ]
+    if (
+        not analysis['metrics'].intersection({'failures'}) and
+        any(phrase in text.lower() for phrase in repeated_issue_phrases)
+    ):
+        analysis['metrics'].discard('defects')
+        analysis['metrics'].add('failures')
+        analysis['math_operation'] = 'distribution'
+        print("Force intent to 'failures' and math_operation to 'distribution' for repeated/recurring issue query")
+    
     return analysis
 
 def perform_calculation(data, analysis):
@@ -1592,12 +1607,12 @@ def query_database(analysis):
                 # Special handling for different query types
                 if 'failures' in analysis['metrics'] and analysis['math_operation'] == 'distribution':
                     # Get all failures first, then group them for distribution calculation
-                    result = list(coll.find().limit(100))  # Limit to reasonable number
+                    result = list(coll.find())  # Removed limit
                 elif 'efficiency' in analysis['metrics'] and analysis.get('calculation_type') == 'efficiency_rate':
                     # Get a reasonable sample for efficiency calculations
-                    result = list(coll.find(query).limit(100))  # More data for better analysis
+                    result = list(coll.find(query))  # Removed limit
                 else:
-                    result = list(coll.find(query).limit(50))
+                    result = list(coll.find(query))  # Removed limit
                     
                 if result:
                     print(f"Found {len(result)} documents in {collection_name}")
@@ -1616,7 +1631,7 @@ def query_database(analysis):
                 for collection_name in collections_to_try:
                     try:
                         # Simply get all documents in collection (typically failure collections are small)
-                        result = list(db[collection_name].find().limit(50))
+                        result = list(db[collection_name].find())  # Removed limit
                         if result:
                             print(f"Found {len(result)} failure documents in {collection_name}")
                             data = result
@@ -1654,7 +1669,7 @@ def query_database(analysis):
                                     flexible_query = {"$or": or_conditions}
                                     
                                     # Try this query
-                                    result = list(db[coll_name].find(flexible_query))
+                                    result = list(db[coll_name].find(flexible_query))  # Removed limit
                                     if result:
                                         print(f"Found {len(result)} documents in {coll_name} with flexible technician query")
                                         data = result
@@ -1689,7 +1704,7 @@ def query_database(analysis):
                                     
                                     # Try this query
                                     print(f"Trying order search with fields: {order_fields}")
-                                    result = list(db[coll_name].find(flexible_query).limit(10))
+                                    result = list(db[coll_name].find(flexible_query))  # Removed limit
                                     if result:
                                         print(f"Found {len(result)} documents in {coll_name} with flexible order query")
                                         data = result
@@ -1722,7 +1737,7 @@ def query_defect_types():
     try:
         if mongodb_available and 'defect_types' in available_collections:
             # Query the defect_types collection
-            defect_types = list(db.defect_types.find().limit(15))
+            defect_types = list(db.defect_types.find())  # Removed limit
             
             if not defect_types:
                 return "No defect types found in the database."
@@ -1765,7 +1780,7 @@ def extract_defect_info_from_performance():
         if mongodb_available and 'performance3' in available_collections:
             # Try to get defect distribution info from performance data
             # Analyze defect fields across records to identify types
-            results = list(db.performance3.find({}, {'defects': 1, 'defectTypes': 1}).limit(100))
+            results = list(db.performance3.find({}, {'defects': 1, 'defectTypes': 1}))  # Removed limit
             
             defect_counts = {}
             
@@ -1803,7 +1818,7 @@ def query_most_common_defects():
             # First try dedicated defect_types collection
             if 'defect_types' in available_collections:
                 # Try to sort by defectTypes (count) field first
-                defect_types = list(db.defect_types.find().sort('defectTypes', -1).limit(5))
+                defect_types = list(db.defect_types.find().sort('defectTypes', -1))  # Removed limit
                 
                 # If no results or no proper count field, try to get from performance data
                 if not defect_types or ('defectTypes' not in defect_types[0] and 'frequency' not in defect_types[0]):
@@ -2348,7 +2363,7 @@ def get_conversation_history(user_id):
         conversations = list(db.chatbot_conversations.find(
             {"user_id": user_id},
             {"_id": 0}  # Exclude MongoDB _id field from results
-        ).sort("timestamp", -1).limit(50))  # Get latest 50 conversations
+        ).sort("timestamp", -1))  # Removed limit for chat history
         
         # Convert datetime objects to string for JSON serialization
         for conv in conversations:
