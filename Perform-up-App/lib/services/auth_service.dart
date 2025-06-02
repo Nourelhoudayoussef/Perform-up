@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'websocket_service.dart';
 
 class AuthService {
-  static const String baseUrl = 'http://10.0.2.2:8080';//ass for laptop
+  static const String baseUrl = 'http://192.168.1.19:8080';//ass for laptop
 
   Future<bool> signUp({
     required String name,

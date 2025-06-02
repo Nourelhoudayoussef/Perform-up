@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../services/chatbot_service.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:permission_handler/permission_handler.dart';
 
 class ChatbotScreen extends StatefulWidget {
   const ChatbotScreen({Key? key}) : super(key: key);
@@ -17,10 +19,99 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   bool _isLoading = false;
   bool _isLoadingHistory = true;
 
+  // Speech to text variables
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _isListening = false;
+  String _lastWords = '';
+
   @override
   void initState() {
     super.initState();
     _loadChatHistory();
+    _initSpeech();
+  }
+
+  // Initialize speech to text
+  void _initSpeech() async {
+    // Request permission first
+    final status = await Permission.microphone.request();
+    if (status.isGranted) {
+      await _speech.initialize(
+        onStatus: (status) => print('Speech status: $status'),
+        onError: (error) => print('Speech error: $error'),
+      );
+    } else {
+      print('Microphone permission not granted');
+    }
+  }
+
+  // Start listening
+  Future<void> _startListening() async {
+    // Check current permission status
+    final status = await Permission.microphone.status;
+    
+    if (status.isDenied) {
+      // If permission is denied, request it again
+      final result = await Permission.microphone.request();
+      if (!result.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Microphone permission is required for voice input'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    if (!_isListening) {
+      bool available = await _speech.initialize(
+        onStatus: (status) => print('Speech status: $status'),
+        onError: (error) => print('Speech error: $error'),
+      );
+      
+      if (available) {
+        setState(() => _isListening = true);
+        await _speech.listen(
+          onResult: (result) {
+            setState(() {
+              _lastWords = result.recognizedWords;
+              if (result.finalResult) {
+                _messageController.text = _lastWords;
+                _isListening = false;
+              }
+            });
+          },
+          localeId: 'en_US', // You can change this to support other languages
+          cancelOnError: true,
+          partialResults: true,
+        );
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Speech recognition not available'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  // Stop listening
+  void _stopListening() {
+    if (_isListening) {
+      _speech.stop();
+      setState(() {
+        _isListening = false;
+        if (_lastWords.isNotEmpty) {
+          _messageController.text = _lastWords;
+        }
+      });
+    }
   }
 
   // Load chat history from the API
@@ -30,29 +121,20 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     });
 
     try {
-      // Get chat history from the service
       final conversations = await _chatbotService.getChatHistory();
       
       if (conversations.isNotEmpty) {
         setState(() {
-          // Clear current messages
           _messages.clear();
           
-          // Sort conversations by timestamp if needed
-          // They should already be sorted from the API, but we'll ensure it here
+          // Sort conversations by timestamp in reverse order (newest first)
           conversations.sort((a, b) {
             final aTime = a['timestamp'] ?? '';
             final bTime = b['timestamp'] ?? '';
-            return aTime.compareTo(bTime); // Older first
+            return bTime.compareTo(aTime); // Newest first
           });
           
-          print('Displaying ${conversations.length} conversations');
-          
-          // Add each conversation to the messages list
           for (var conversation in conversations) {
-            final timestamp = conversation['timestamp'] ?? '';
-            print('Adding conversation from: $timestamp');
-            
             // Add user question
             _messages.add(ChatMessage(
               text: conversation['question'] ?? '',
@@ -67,19 +149,15 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           }
         });
       } else {
-        print('No conversations found, adding welcome message');
-        // If no history, just add the welcome message
         _addWelcomeMessage();
       }
     } catch (e) {
       print('Error loading chat history: $e');
-      // If there's an error, show welcome message
       _addWelcomeMessage();
       
-      // Show a snackbar with the error message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+          const SnackBar(
             content: Text('Could not load chat history. Starting a new conversation.'),
             duration: Duration(seconds: 3),
           ),
@@ -89,8 +167,6 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       setState(() {
         _isLoadingHistory = false;
       });
-      
-      // Scroll to the bottom after loading history
       _scrollToBottom();
     }
   }
@@ -108,6 +184,8 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
 
   @override
   void dispose() {
+    _stopListening();
+    _speech.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -160,15 +238,9 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   }
 
   void _scrollToBottom() {
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(0.0); // Scroll to top since list is reversed
+    }
   }
 
   @override
@@ -178,26 +250,35 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFFD0ECE8),
         elevation: 0,
-        title: Text(
-          'AI Assistant',
-          style: GoogleFonts.poppins(
-            fontSize: 20,
-            fontWeight: FontWeight.w500,
-            color: const Color(0xC5000000),
-          ),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6BBFB5).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.smart_toy,
+                color: Color(0xFF6BBFB5),
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'AI Assistant',
+              style: GoogleFonts.poppins(
+                fontSize: 20,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xC5000000),
+              ),
+            ),
+          ],
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Color(0xC5000000)),
           onPressed: () => Navigator.pop(context),
         ),
-        actions: [
-          // Add refresh button to reload chat history
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Color(0xC5000000)),
-            onPressed: _loadChatHistory,
-            tooltip: 'Reload conversation history',
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -209,13 +290,15 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                     ),
                   )
                 : ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                return _messages[index];
-              },
-            ),
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _messages.length,
+                    reverse: true,
+                    itemBuilder: (context, index) {
+                      final message = _messages[_messages.length - 1 - index];
+                      return message;
+                    },
+                  ),
           ),
           if (_isLoading)
             Padding(
@@ -235,16 +318,18 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Text("Thinking...", 
-                    style: TextStyle(
-                      color: Color(0xFF6BBFB5),
+                  Text(
+                    "Thinking...",
+                    style: GoogleFonts.poppins(
+                      color: const Color(0xFF6BBFB5),
                       fontWeight: FontWeight.w500,
-                    )
+                    ),
                   ),
                 ],
               ),
             ),
           Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
               color: Colors.white,
               boxShadow: [
@@ -255,30 +340,51 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                 ),
               ],
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: SafeArea(
               child: Row(
                 children: [
+                  // Microphone button
+                  Container(
+                    decoration: BoxDecoration(
+                      color: _isListening ? Colors.red.withOpacity(0.1) : const Color(0xFFD0ECE8).withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: IconButton(
+                      icon: Icon(
+                        _isListening ? Icons.mic : Icons.mic_none,
+                        color: _isListening ? Colors.red : const Color(0xFF6BBFB5),
+                      ),
+                      onPressed: () {
+                        if (_isListening) {
+                          _stopListening();
+                        } else {
+                          _startListening();
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF0F7F5),
+                        color: const Color(0xFFD0ECE8).withOpacity(0.3),
                         borderRadius: BorderRadius.circular(24),
                       ),
                       child: TextField(
                         controller: _messageController,
                         decoration: InputDecoration(
-                          hintText: 'Type your message...',
+                          hintText: _isListening ? 'Listening...' : 'Type your message...',
                           hintStyle: GoogleFonts.poppins(
-                            color: Colors.black38,
+                            color: const Color(0x80000000),
                             fontSize: 14,
                           ),
                           border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                          contentPadding: const EdgeInsets.symmetric(vertical: 10),
                         ),
                         style: GoogleFonts.poppins(
                           fontSize: 14,
-                          color: Colors.black87,
+                          color: const Color(0xC5000000),
                         ),
                         maxLines: null,
                         textInputAction: TextInputAction.send,
@@ -286,15 +392,21 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF6BBFB5),
+                  const SizedBox(width: 8),
+                  Material(
+                    color: const Color(0xFF6BBFB5),
+                    borderRadius: BorderRadius.circular(24),
+                    child: InkWell(
+                      onTap: () => _handleSubmitted(_messageController.text),
                       borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: IconButton(
-                      icon: const Icon(Icons.send, color: Colors.white),
-                      onPressed: () => _handleSubmitted(_messageController.text),
+                      child: const Padding(
+                        padding: EdgeInsets.all(10),
+                        child: Icon(
+                          Icons.send,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -319,69 +431,75 @@ class ChatMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (!isUser) ...[
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF6BBFB5).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.smart_toy,
-                color: Color(0xFF6BBFB5),
-                size: 20,
-              ),
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: isUser ? const Color(0xFFD0ECE8) : Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isUser ? 16 : 0),
+            bottomRight: Radius.circular(isUser ? 0 : 16),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 5,
+              offset: const Offset(0, 2),
             ),
-            const SizedBox(width: 8),
           ],
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: isUser ? const Color(0xFF6BBFB5) : Colors.white,
-                borderRadius: BorderRadius.circular(20).copyWith(
-                  bottomRight: isUser ? const Radius.circular(4) : null,
-                  bottomLeft: !isUser ? const Radius.circular(4) : null,
+        ),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!isUser) ...[
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6BBFB5).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 5,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+                child: const Icon(
+                  Icons.smart_toy,
+                  color: Color(0xFF6BBFB5),
+                  size: 20,
+                ),
               ),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
               child: Text(
                 text,
                 style: GoogleFonts.poppins(
                   fontSize: 14,
-                  color: isUser ? Colors.white : Colors.black87,
+                  color: const Color(0xC5000000),
                 ),
               ),
             ),
-          ),
-          if (isUser) ...[
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF6BBFB5).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
+            if (isUser) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6BBFB5).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.person,
+                  color: Color(0xFF6BBFB5),
+                  size: 20,
+                ),
               ),
-              child: const Icon(
-                Icons.person,
-                color: Color(0xFF6BBFB5),
-                size: 20,
-              ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

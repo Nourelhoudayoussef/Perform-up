@@ -4,6 +4,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../services/supervisor_service.dart';
 import '../../widgets/floating_ai_bubble.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class HomeSupervisorScreen extends StatefulWidget {
   const HomeSupervisorScreen({Key? key}) : super(key: key);
@@ -18,15 +20,16 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
   // State for daily target
   String? _selectedProductRef;
   int? _targetQuantity;
-  bool _targetSet = false;
+  Map<String, int> _productTargets = {};
+  DateTime? _lastTargetDate;
 
   // State for workshop and chains
   String? _selectedWorkshop = '1';
   Map<String, bool> _expandedChains = {'1': false, '2': false, '3': false};
   
-  // Static map to persist performance data across navigation
-  static Map<String, Map<String, Map<String, dynamic>>> _persistentPerformanceData = {};
-  Map<String, Map<String, Map<String, dynamic>>> _performanceData = {};
+  // New: {productRef: {workshop: {chain: {hour: {data}}}}}
+  static Map<String, Map<String, Map<String, Map<String, Map<String, dynamic>>>>> _persistentPerformanceData = {};
+  Map<String, Map<String, Map<String, Map<String, Map<String, dynamic>>>>> _performanceData = {};
 
   final List<String> _productRefs = ['101', '102', '103', '104', '105'];
   final List<String> _workshops = ['1', '2', '3'];
@@ -40,25 +43,132 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize performance data structure if not already initialized
-    if (_persistentPerformanceData.isEmpty) {
+    _loadSavedTargets();
+    _loadSavedPerformanceData();
+  }
+
+  Future<void> _loadSavedTargets() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedDate = prefs.getString('lastTargetDate');
+    final savedTargets = prefs.getString('productTargets');
+    
+    if (savedDate != null) {
+      _lastTargetDate = DateTime.parse(savedDate);
+    }
+
+    if (savedTargets != null) {
+      final Map<String, dynamic> decoded = json.decode(savedTargets);
+      setState(() {
+        _productTargets = decoded.map((key, value) => MapEntry(key, value as int));
+      });
+    }
+  }
+
+  Future<void> _saveTargets() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lastTargetDate', DateTime.now().toIso8601String());
+    await prefs.setString('productTargets', json.encode(_productTargets));
+  }
+
+  Future<void> _loadSavedPerformanceData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedData = prefs.getString('performanceData');
+
+    // Start with a fresh structure
+    Map<String, Map<String, Map<String, Map<String, Map<String, dynamic>>>>> data = {};
+
+    if (savedData != null) {
+      final Map<String, dynamic> decoded = json.decode(savedData);
+      data = decoded.map((productKey, productData) {
+        return MapEntry(
+          productKey,
+          (productData as Map<String, dynamic>).map((workshopKey, workshopData) {
+            return MapEntry(
+              workshopKey,
+              (workshopData as Map<String, dynamic>).map((chainKey, chainData) {
+                return MapEntry(
+                  chainKey,
+                  (chainData as Map<String, dynamic>).map((hourKey, hourData) {
+                    return MapEntry(
+                      hourKey,
+                      Map<String, dynamic>.from(hourData as Map),
+                    );
+                  }),
+                );
+              }),
+            );
+          }),
+        );
+      });
+    }
+
+    // Ensure all productRefs/workshops/chains/hours are present
+    for (var productRef in _productRefs) {
+      data.putIfAbsent(productRef, () => {});
+      for (var workshop in _workshops) {
+        data[productRef]!.putIfAbsent(workshop, () => {});
       for (var chain in _chains) {
-        _persistentPerformanceData[chain] = {};
+          data[productRef]![workshop]!.putIfAbsent(chain, () => {});
         for (var hour in _hours) {
-          _persistentPerformanceData[chain]![hour] = {
+            data[productRef]![workshop]![chain]!.putIfAbsent(hour, () => {
             'produced': '',
             'defected': '',
             'defectType': '',
-          };
+            });
+          }
         }
       }
     }
-    // Use the persistent data
+
+    setState(() {
+      _persistentPerformanceData = data;
     _performanceData = Map.from(_persistentPerformanceData);
+    });
+  }
+
+  Future<void> _savePerformanceData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('performanceData', json.encode(_persistentPerformanceData));
+  }
+
+  bool _canSetNewTargets() {
+    if (_lastTargetDate == null) return true;
+    
+    final now = DateTime.now();
+    // Check if it's a new day
+    final isNewDay = _lastTargetDate!.year != now.year || 
+                     _lastTargetDate!.month != now.month || 
+                     _lastTargetDate!.day != now.day;
+    
+    // If it's a new day, we can set new targets
+    if (isNewDay) {
+      // Clear previous targets for the new day
+      setState(() {
+        _productTargets.clear();
+        _lastTargetDate = null;
+      });
+      _saveTargets();
+      return true;
+    }
+    
+    // If it's the same day, we can still set targets for products that don't have one yet
+    return true;
   }
 
   void _setDailyTarget() async {
     if (_selectedProductRef == null || _targetQuantity == null) return;
+
+    // Check if this product already has a target for today
+    if (_productTargets.containsKey(_selectedProductRef)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This product already has a target set for today.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       await _supervisorService.setDailyTarget(
@@ -66,7 +176,15 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
         _targetQuantity!,
       );
       setState(() {
-        _targetSet = true;
+        _productTargets[_selectedProductRef!] = _targetQuantity!;
+        if (_lastTargetDate == null) {
+          _lastTargetDate = DateTime.now();
+        }
+        // Save targets after successful API call
+        _saveTargets();
+        // Reset selection after setting target
+        _selectedProductRef = null;
+        _targetQuantity = null;
       });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -77,9 +195,10 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
   }
 
   void _savePerformance(String chain, String hour) async {
+    if (_selectedProductRef == null || _selectedWorkshop == null) return;
     setState(() => _isLoading = true);
     try {
-      final entry = _performanceData[chain]![hour]!;
+      final entry = _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour]!;
       await _supervisorService.recordPerformanceData({
         'hour': hour,
         'workshopInt': int.parse(_selectedWorkshop!),
@@ -94,7 +213,9 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
         'orderRef': int.tryParse(_selectedProductRef ?? ''),
       });
       // Update persistent data
-      _persistentPerformanceData[chain]![hour] = Map.from(entry);
+      _persistentPerformanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour] = Map.from(entry);
+      // Save to persistent storage
+      _savePerformanceData();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Performance saved!')),
       );
@@ -106,7 +227,17 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
     setState(() => _isLoading = false);
   }
 
+  @override
+  void dispose() {
+    _saveTargets();
+    _savePerformanceData();
+    super.dispose();
+  }
+
   Widget _buildTargetSection() {
+    final canSetNewTargets = _canSetNewTargets();
+    final allProductsHaveTargets = _productRefs.every((ref) => _productTargets.containsKey(ref));
+    
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -114,7 +245,22 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (allProductsHaveTargets)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: Text(
+                  'All product targets set for today',
+                  style: GoogleFonts.poppins(
+                    color: Colors.green[600],
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+            Row(
           children: [
             Expanded(
               child: Column(
@@ -139,8 +285,31 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                       hint: const Text('Ref'),
                       isExpanded: true,
                       underline: const SizedBox(),
-                      items: _productRefs.map((ref) => DropdownMenuItem(value: ref, child: Text(ref))).toList(),
-                      onChanged: _targetSet ? null : (val) => setState(() => _selectedProductRef = val),
+                          items: _productRefs.map((ref) {
+                            final hasTarget = _productTargets.containsKey(ref);
+                            final isSelected = ref == _selectedProductRef;
+                            return DropdownMenuItem(
+                              value: ref,
+                              child: Text(
+                                ref,
+                                style: TextStyle(
+                                  color: isSelected ? Colors.black : (hasTarget ? Colors.grey : Colors.black),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setState(() {
+                                _selectedProductRef = val;
+                                if (_productTargets.containsKey(val)) {
+                                  _targetQuantity = _productTargets[val];
+                                } else {
+                                  _targetQuantity = null;
+                                }
+                              });
+                            }
+                          },
                     ),
                   ),
                 ],
@@ -159,33 +328,27 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  _targetSet
-                    ? Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF0F7F5),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          _targetQuantity?.toString() ?? '',
-                          style: GoogleFonts.poppins(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      )
-                    : Container(
+                      Container(
                         decoration: BoxDecoration(
                           color: const Color(0xFFF0F7F5),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: TextField(
-                          enabled: !_targetSet,
+                          enabled: _selectedProductRef != null && !_productTargets.containsKey(_selectedProductRef),
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            hintText: 'Quantity',
+                          controller: TextEditingController(
+                            text: _selectedProductRef != null && _productTargets.containsKey(_selectedProductRef)
+                                ? _productTargets[_selectedProductRef].toString()
+                                : '',
+                          ),
+                          decoration: InputDecoration(
+                            hintText: _selectedProductRef == null 
+                                ? 'Quantity'
+                                : _productTargets.containsKey(_selectedProductRef)
+                                    ? 'Target already set'
+                                    : 'Quantity',
                             border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                           ),
                           onChanged: (val) => _targetQuantity = int.tryParse(val),
                         ),
@@ -195,14 +358,18 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
             ),
             const SizedBox(width: 16),
             ElevatedButton(
-              onPressed: _targetSet || _isLoading ? null : _setDailyTarget,
+                  onPressed: (_isLoading || _selectedProductRef == null || _productTargets.containsKey(_selectedProductRef))
+                      ? null
+                      : _setDailyTarget,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF6BBFB5),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 minimumSize: const Size(0, 40),
               ),
-              child: const Text('Set Target', style: TextStyle(color: Colors.white) ),
+                  child: const Text('Set Target', style: TextStyle(color: Colors.white)),
+                ),
+              ],
             ),
           ],
         ),
@@ -243,6 +410,9 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
 
   Widget _buildChainCard(String chain) {
     final isExpanded = _expandedChains[chain]!;
+    // Get performance data for current product, workshop and chain
+    final chainData = _performanceData[_selectedProductRef]?[_selectedWorkshop]?[chain] ?? {};
+    
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -281,8 +451,13 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: _hours.map((hour) {
-                  final entry = _performanceData[chain]![hour]!;
-                  final isLogged = entry['produced'].toString().isNotEmpty && entry['defected'].toString().isNotEmpty;
+                  final entry = chainData[hour] ?? {
+                    'produced': '',
+                    'defected': '',
+                    'defectType': '',
+                  };
+                  final isLogged = entry['produced'].toString().isNotEmpty && 
+                                 entry['defected'].toString().isNotEmpty;
                   return Column(
                     children: [
                       Text(
@@ -315,10 +490,15 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: _hours.map((hour) {
-                  final entry = _performanceData[chain]![hour]!;
+                  final entry = chainData[hour] ?? {
+                    'produced': '',
+                    'defected': '',
+                    'defectType': '',
+                  };
                   final producedController = TextEditingController(text: entry['produced'].toString());
                   final defectedController = TextEditingController(text: entry['defected'].toString());
                   final defectTypeController = TextEditingController(text: entry['defectType'].toString());
+                  
                   return Card(
                     elevation: 0,
                     margin: const EdgeInsets.only(bottom: 12),
@@ -382,12 +562,27 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                                     filled: true,
                                     fillColor: const Color(0xFFF0F7F5),
                                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                                    hintStyle: GoogleFonts.poppins(
-                                      fontSize: 15,
-                                      color: Colors.black38,
-                                    ),
                                   ),
-                                  onChanged: (val) => _performanceData[chain]![hour]!['produced'] = val,
+                                  onChanged: (val) {
+                                    if (_selectedProductRef == null || _selectedWorkshop == null) return;
+                                    if (_performanceData[_selectedProductRef!] == null) {
+                                      _performanceData[_selectedProductRef!] = {};
+                                    }
+                                    if (_performanceData[_selectedProductRef!]![_selectedWorkshop!] == null) {
+                                      _performanceData[_selectedProductRef!]![_selectedWorkshop!] = {};
+                                    }
+                                    if (_performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain] == null) {
+                                      _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain] = {};
+                                    }
+                                    if (_performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour] == null) {
+                                      _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour] = {
+                                        'produced': '',
+                                        'defected': '',
+                                        'defectType': '',
+                                      };
+                                    }
+                                    _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour]!['produced'] = val;
+                                  },
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -412,12 +607,27 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                                     filled: true,
                                     fillColor: const Color(0xFFF0F7F5),
                                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                                    hintStyle: GoogleFonts.poppins(
-                                      fontSize: 15,
-                                      color: Colors.black38,
-                                    ),
                                   ),
-                                  onChanged: (val) => _performanceData[chain]![hour]!['defected'] = val,
+                                  onChanged: (val) {
+                                    if (_selectedProductRef == null || _selectedWorkshop == null) return;
+                                    if (_performanceData[_selectedProductRef!] == null) {
+                                      _performanceData[_selectedProductRef!] = {};
+                                    }
+                                    if (_performanceData[_selectedProductRef!]![_selectedWorkshop!] == null) {
+                                      _performanceData[_selectedProductRef!]![_selectedWorkshop!] = {};
+                                    }
+                                    if (_performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain] == null) {
+                                      _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain] = {};
+                                    }
+                                    if (_performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour] == null) {
+                                      _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour] = {
+                                        'produced': '',
+                                        'defected': '',
+                                        'defectType': '',
+                                      };
+                                    }
+                                    _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour]!['defected'] = val;
+                                  },
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -441,12 +651,27 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                                     filled: true,
                                     fillColor: const Color(0xFFF0F7F5),
                                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                                    hintStyle: GoogleFonts.poppins(
-                                      fontSize: 15,
-                                      color: Colors.black38,
-                                    ),
                                   ),
-                                  onChanged: (val) => _performanceData[chain]![hour]!['defectType'] = val,
+                                  onChanged: (val) {
+                                    if (_selectedProductRef == null || _selectedWorkshop == null) return;
+                                    if (_performanceData[_selectedProductRef!] == null) {
+                                      _performanceData[_selectedProductRef!] = {};
+                                    }
+                                    if (_performanceData[_selectedProductRef!]![_selectedWorkshop!] == null) {
+                                      _performanceData[_selectedProductRef!]![_selectedWorkshop!] = {};
+                                    }
+                                    if (_performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain] == null) {
+                                      _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain] = {};
+                                    }
+                                    if (_performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour] == null) {
+                                      _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour] = {
+                                        'produced': '',
+                                        'defected': '',
+                                        'defectType': '',
+                                      };
+                                    }
+                                    _performanceData[_selectedProductRef!]![_selectedWorkshop!]![chain]![hour]!['defectType'] = val;
+                                  },
                                 ),
                               ),
                             ],
