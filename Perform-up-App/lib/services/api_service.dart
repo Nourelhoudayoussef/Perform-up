@@ -29,7 +29,7 @@ class ApiService {
     return 'http://192.168.3.128:8080'; // Fallback 
   }*/
 
-  static String baseUrl = 'http://192.168.1.19:8080';
+  static String baseUrl = 'http://192.168.137.209:8080';
 
 
   static const Duration _minRequestInterval = Duration(milliseconds: 500);

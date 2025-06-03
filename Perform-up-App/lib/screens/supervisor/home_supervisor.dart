@@ -27,7 +27,7 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
   String? _selectedWorkshop = '1';
   Map<String, bool> _expandedChains = {'1': false, '2': false, '3': false};
   
-  // New: {productRef: {workshop: {chain: {hour: {data}}}}}
+  // Performance data structure
   static Map<String, Map<String, Map<String, Map<String, Map<String, dynamic>>>>> _persistentPerformanceData = {};
   Map<String, Map<String, Map<String, Map<String, Map<String, dynamic>>>>> _performanceData = {};
 
@@ -44,7 +44,14 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
   void initState() {
     super.initState();
     _loadSavedTargets();
-    _loadSavedPerformanceData();
+    // Don't load performance data here, wait for didChangeDependencies
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Load saved state and performance data when screen is shown
+    _loadSavedState();
   }
 
   Future<void> _loadSavedTargets() async {
@@ -70,60 +77,81 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
     await prefs.setString('productTargets', json.encode(_productTargets));
   }
 
-  Future<void> _loadSavedPerformanceData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedData = prefs.getString('performanceData');
+  Future<void> _loadPerformanceData() async {
+    if (_selectedProductRef == null || _selectedWorkshop == null) return;
 
-    // Start with a fresh structure
-    Map<String, Map<String, Map<String, Map<String, Map<String, dynamic>>>>> data = {};
+    setState(() {
+      _isLoading = true;
+    });
 
-    if (savedData != null) {
-      final Map<String, dynamic> decoded = json.decode(savedData);
-      data = decoded.map((productKey, productData) {
-        return MapEntry(
-          productKey,
-          (productData as Map<String, dynamic>).map((workshopKey, workshopData) {
-            return MapEntry(
-              workshopKey,
-              (workshopData as Map<String, dynamic>).map((chainKey, chainData) {
-                return MapEntry(
-                  chainKey,
-                  (chainData as Map<String, dynamic>).map((hourKey, hourData) {
-                    return MapEntry(
-                      hourKey,
-                      Map<String, dynamic>.from(hourData as Map),
-                    );
-                  }),
-                );
-              }),
-            );
-          }),
-        );
-      });
-    }
-
-    // Ensure all productRefs/workshops/chains/hours are present
-    for (var productRef in _productRefs) {
-      data.putIfAbsent(productRef, () => {});
-      for (var workshop in _workshops) {
-        data[productRef]!.putIfAbsent(workshop, () => {});
-      for (var chain in _chains) {
-          data[productRef]![workshop]!.putIfAbsent(chain, () => {});
-        for (var hour in _hours) {
-            data[productRef]![workshop]![chain]!.putIfAbsent(hour, () => {
-            'produced': '',
-            'defected': '',
-            'defectType': '',
-            });
+    try {
+      // Initialize empty data structure
+      Map<String, Map<String, Map<String, Map<String, Map<String, dynamic>>>>> data = {};
+      
+      // Ensure all productRefs/workshops/chains/hours are present
+      for (var productRef in _productRefs) {
+        data.putIfAbsent(productRef, () => {});
+        for (var workshop in _workshops) {
+          data[productRef]!.putIfAbsent(workshop, () => {});
+          for (var chain in _chains) {
+            data[productRef]![workshop]!.putIfAbsent(chain, () => {});
+            for (var hour in _hours) {
+              data[productRef]![workshop]![chain]!.putIfAbsent(hour, () => {
+                'produced': '',
+                'defected': '',
+                'defectType': '',
+              });
+            }
           }
         }
       }
-    }
 
-    setState(() {
-      _persistentPerformanceData = data;
-    _performanceData = Map.from(_persistentPerformanceData);
-    });
+      // Fetch data from API for current selection
+      final apiData = await _supervisorService.getPerformanceData(
+        productRef: _selectedProductRef!,
+        workshop: _selectedWorkshop!,
+        date: DateTime.now(),
+      );
+
+      // Process API data
+      if (apiData != null) {
+        apiData.forEach((chain, chainData) {
+          if (chainData is Map) {
+            chainData.forEach((hour, hourData) {
+              if (hourData is Map) {
+                data[_selectedProductRef!]![_selectedWorkshop!]![chain.toString()]![hour.toString()] = {
+                  'produced': hourData['produced']?.toString() ?? '',
+                  'defected': hourData['defected']?.toString() ?? '',
+                  'defectType': hourData['defectType']?.toString() ?? '',
+                };
+              }
+            });
+          }
+        });
+      }
+
+      setState(() {
+        _persistentPerformanceData = data;
+        _performanceData = Map.from(_persistentPerformanceData);
+      });
+
+      // Save to local storage
+      await _savePerformanceData();
+    } catch (e) {
+      print('Error loading performance data: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading performance data: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _savePerformanceData() async {
@@ -227,8 +255,45 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
     setState(() => _isLoading = false);
   }
 
+  // Add new method to load saved state
+  Future<void> _loadSavedState() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Load last selected product and workshop
+    final savedProductRef = prefs.getString('lastSelectedProduct');
+    final savedWorkshop = prefs.getString('lastSelectedWorkshop');
+    
+    if (savedProductRef != null && savedWorkshop != null) {
+      setState(() {
+        _selectedProductRef = savedProductRef;
+        _selectedWorkshop = savedWorkshop;
+        // If we have a saved target for this product, load it
+        if (_productTargets.containsKey(savedProductRef)) {
+          _targetQuantity = _productTargets[savedProductRef];
+        }
+      });
+      // Load performance data for the saved selection
+      await _loadPerformanceData();
+    } else if (_selectedProductRef != null && _selectedWorkshop != null) {
+      // If we have a current selection but no saved state, load data for current selection
+      await _loadPerformanceData();
+    }
+  }
+
+  // Add method to save current state
+  Future<void> _saveCurrentState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_selectedProductRef != null) {
+      await prefs.setString('lastSelectedProduct', _selectedProductRef!);
+    }
+    if (_selectedWorkshop != null) {
+      await prefs.setString('lastSelectedWorkshop', _selectedWorkshop!);
+    }
+  }
+
   @override
   void dispose() {
+    _saveCurrentState(); // Save state when leaving the screen
     _saveTargets();
     _savePerformanceData();
     super.dispose();
@@ -261,30 +326,30 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                 ),
               ),
             Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Product',
-                    style: GoogleFonts.poppins(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF0F7F5),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: DropdownButton<String>(
-                      value: _selectedProductRef,
-                      hint: const Text('Ref'),
-                      isExpanded: true,
-                      underline: const SizedBox(),
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Product',
+                        style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0F7F5),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: DropdownButton<String>(
+                          value: _selectedProductRef,
+                          hint: const Text('Ref'),
+                          isExpanded: true,
+                          underline: const SizedBox(),
                           items: _productRefs.map((ref) {
                             final hasTarget = _productTargets.containsKey(ref);
                             final isSelected = ref == _selectedProductRef;
@@ -298,7 +363,7 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                               ),
                             );
                           }).toList(),
-                          onChanged: (val) {
+                          onChanged: (val) async {
                             if (val != null) {
                               setState(() {
                                 _selectedProductRef = val;
@@ -308,26 +373,29 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                                   _targetQuantity = null;
                                 }
                               });
+                              // Save state and load performance data
+                              await _saveCurrentState();
+                              await _loadPerformanceData();
                             }
                           },
-                    ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Target',
-                    style: GoogleFonts.poppins(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Target',
+                        style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
                       Container(
                         decoration: BoxDecoration(
                           color: const Color(0xFFF0F7F5),
@@ -353,20 +421,20 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
                           onChanged: (val) => _targetQuantity = int.tryParse(val),
                         ),
                       ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            ElevatedButton(
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                ElevatedButton(
                   onPressed: (_isLoading || _selectedProductRef == null || _productTargets.containsKey(_selectedProductRef))
                       ? null
                       : _setDailyTarget,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF6BBFB5),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                minimumSize: const Size(0, 40),
-              ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6BBFB5),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    minimumSize: const Size(0, 40),
+                  ),
                   child: const Text('Set Target', style: TextStyle(color: Colors.white)),
                 ),
               ],
@@ -394,7 +462,14 @@ class _HomeSupervisorScreenState extends State<HomeSupervisorScreen> {
       child: DropdownButtonFormField<String>(
         value: _selectedWorkshop,
         items: _workshops.map((w) => DropdownMenuItem(value: w, child: Text('Workshop $w'))).toList(),
-        onChanged: (val) => setState(() => _selectedWorkshop = val),
+        onChanged: (val) async {
+          if (val != null) {
+            setState(() => _selectedWorkshop = val);
+            // Save state and load performance data
+            await _saveCurrentState();
+            await _loadPerformanceData();
+          }
+        },
         decoration: InputDecoration(
           filled: true,
           fillColor: const Color(0xFFD0ECE8),

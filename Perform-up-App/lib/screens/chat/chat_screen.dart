@@ -6,6 +6,8 @@ import 'package:pfe/services/websocket_service.dart';
 import 'package:pfe/models/message.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pfe/models/chat_group.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:permission_handler/permission_handler.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -38,6 +40,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isDisposed = false;
   Timer? _refreshTimer;
 
+  // Speech to text variables
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _isListening = false;
+  String _lastWords = '';
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +52,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _initializeChat();
     _subscribeToWebSocketMessages();
     _startRefreshTimer();
+    _initSpeech();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -69,6 +77,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.dispose();
     _chatSubscription?.cancel();
     _refreshTimer?.cancel();
+    _stopListening();
+    _speech.cancel();
     super.dispose();
   }
 
@@ -272,6 +282,89 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // Initialize speech to text
+  void _initSpeech() async {
+    // Request permission first
+    final status = await Permission.microphone.request();
+    if (status.isGranted) {
+      await _speech.initialize(
+        onStatus: (status) => print('Speech status: $status'),
+        onError: (error) => print('Speech error: $error'),
+      );
+    } else {
+      print('Microphone permission not granted');
+    }
+  }
+
+  // Start listening
+  Future<void> _startListening() async {
+    // Check current permission status
+    final status = await Permission.microphone.status;
+    
+    if (status.isDenied) {
+      // If permission is denied, request it again
+      final result = await Permission.microphone.request();
+      if (!result.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Microphone permission is required for voice input'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    if (!_isListening) {
+      bool available = await _speech.initialize(
+        onStatus: (status) => print('Speech status: $status'),
+        onError: (error) => print('Speech error: $error'),
+      );
+      
+      if (available) {
+        setState(() => _isListening = true);
+        await _speech.listen(
+          onResult: (result) {
+            setState(() {
+              _lastWords = result.recognizedWords;
+              if (result.finalResult) {
+                _messageController.text = _lastWords;
+                _isListening = false;
+              }
+            });
+          },
+          localeId: 'en_US',
+          cancelOnError: true,
+          partialResults: true,
+        );
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Speech recognition not available'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  // Stop listening
+  void _stopListening() {
+    if (_isListening) {
+      _speech.stop();
+      setState(() {
+        _isListening = false;
+        if (_lastWords.isNotEmpty) {
+          _messageController.text = _lastWords;
+        }
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -392,6 +485,27 @@ class _ChatScreenState extends State<ChatScreen> {
             child: SafeArea(
               child: Row(
                 children: [
+                  // Microphone button
+                  Container(
+                    decoration: BoxDecoration(
+                      color: _isListening ? Colors.red.withOpacity(0.1) : const Color(0xFFD0ECE8).withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: IconButton(
+                      icon: Icon(
+                        _isListening ? Icons.mic : Icons.mic_none,
+                        color: _isListening ? Colors.red : const Color(0xFF6BBFB5),
+                      ),
+                      onPressed: () {
+                        if (_isListening) {
+                          _stopListening();
+                        } else {
+                          _startListening();
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -402,7 +516,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       child: TextField(
                         controller: _messageController,
                         decoration: InputDecoration(
-                          hintText: 'Type a message...',
+                          hintText: _isListening ? 'Listening...' : 'Type a message...',
                           hintStyle: GoogleFonts.poppins(
                             color: const Color(0x80000000),
                             fontSize: 14,
@@ -410,6 +524,12 @@ class _ChatScreenState extends State<ChatScreen> {
                           border: InputBorder.none,
                           contentPadding: const EdgeInsets.symmetric(vertical: 10),
                         ),
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          color: const Color(0xC5000000),
+                        ),
+                        maxLines: null,
+                        textInputAction: TextInputAction.send,
                         onSubmitted: (_) => _sendMessage(),
                       ),
                     ),
