@@ -18,7 +18,7 @@ class ConfigService {
     if (kDebugMode) {
       // Development environment
       if (Platform.isAndroid) {
-        return 'http://10.0.2.2:8080';//emulator
+        return 'http://10.0.2.2:8080'; //emulator
       } else if (Platform.isIOS) {
         return 'http://localhost:8080';
       }

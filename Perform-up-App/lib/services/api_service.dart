@@ -32,6 +32,7 @@ class ApiService {
   static String baseUrl = 'http://10.0.2.2:8080';
 
 
+
   static const Duration _minRequestInterval = Duration(milliseconds: 500);
   DateTime _lastRequestTime = DateTime.now().subtract(const Duration(seconds: 1));
 
