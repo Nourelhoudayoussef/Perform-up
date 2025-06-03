@@ -137,11 +137,11 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
         setState(() {
           _messages.clear();
           
-          // Sort conversations by timestamp in reverse order (newest first)
+          // Sort conversations by timestamp in ascending order (oldest first)
           conversations.sort((a, b) {
             final aTime = a['timestamp'] ?? '';
             final bTime = b['timestamp'] ?? '';
-            return bTime.compareTo(aTime); // Newest first
+            return aTime.compareTo(bTime); // Oldest first
           });
           
           for (var conversation in conversations) {

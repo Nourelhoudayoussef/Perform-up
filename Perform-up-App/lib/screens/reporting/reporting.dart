@@ -30,7 +30,7 @@ class _ReportingScreenState extends State<ReportingScreen> {
     });
     final formattedDate = DateFormat('yyyy-MM-dd').format(_selectedDate!);
 
-    final url = Uri.parse('http://192.168.1.19:8080/api/reports/daily?date=$formattedDate');
+    final url = Uri.parse('http://10.0.2.2:8080/api/reports/daily?date=$formattedDate');
    
     try {
       final prefs = await SharedPreferences.getInstance();

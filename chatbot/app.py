@@ -2508,7 +2508,8 @@ def get_guidance(query):
 @app.route("/chatbot", methods=["POST"])
 def chatbot():
     import sys
-    response = ""
+    response = None
+    handled = False
     print("[DEBUG] chatbot route hit")
     data = request.get_json()
     message = data.get("message", "").lower()
@@ -2544,13 +2545,10 @@ def chatbot():
     # Role-based greeting feature
     greeting_words = {"hi", "hello", "hey"}
     if message.strip() in greeting_words:
-        print("[DEBUG] returning: greeting branch")
-        sys.stdout.flush()
         # Try to get the user's role from the database if user_id is provided
         role = None
         if user_id and user_id != "anonymous" and mongodb_available and db is not None:
             try:
-                # Convert user_id to ObjectId if it's a string
                 if isinstance(user_id, str):
                     user_id = ObjectId(user_id)
                 user_doc = db["new_data.users"].find_one({"_id": user_id})
@@ -2558,84 +2556,41 @@ def chatbot():
                     role = user_doc["role"]
             except Exception as e:
                 print(f"Error fetching user role for greeting: {e}")
-        if role:
-            response = f"Hello {role.upper()}!"
-        else:
-            response = "Hello!"
-        # Save greeting response to database
-        if mongodb_available and db is not None:
-            try:
-                current_time = datetime.now(UTC)
-                print(f"Saving greeting conversation for user {user_id} at {current_time.isoformat()}")
-                conversation_doc = {
-                    "user_id": str(user_id),  # Always store as string!
-                    "question": message,
-                    "response": response,
-                    "timestamp": current_time
-                }
-                result = db.chatbot_conversations.insert_one(conversation_doc)
-                print(f"Saved greeting conversation for user {user_id}, id: {result.inserted_id}")
-            except Exception as e:
-                print(f"Error saving greeting conversation: {str(e)}")
-        print("[DEBUG] return: greeting response")
-        sys.stdout.flush()
-        return {"response": response}
-
-    # Existing logic follows...
-    # Get intent prediction
-    prediction = intent_predictor.predict(message)
-    intent = prediction['intent']
-    confidence = prediction['confidence']
-    entities = prediction.get('entities', {})
-    
-    print(f"Intent: {intent}, Confidence: {confidence:.4f}")
+        response = f"Hello {role.upper()}!" if role else "Hello!"
+        handled = True
 
     # Backend fallback for user/role queries if intent is not guidance
-    user_keywords = ['supervisor', 'technician', 'manager']
-    user_actions = ['how many', 'number', 'count', 'list', 'show', 'names', 'who']
-    if (any(role in message for role in user_keywords) and
-        any(action in message for action in user_actions) and
-        intent != 'guidance'):
-        role = next((r for r in user_keywords if r in message), None)
-        if role:
-            if any(word in message for word in ['how many', 'number', 'count', 'total']):
-                attribute = 'count'
-            elif any(word in message for word in ['name', 'list', 'show']):
-                attribute = 'names'
-            else:
-                attribute = 'count'
-            if attribute == 'count':
-                count = db["new_data.users"].count_documents({"role": {"$regex": f"^{role}$", "$options": "i"}})
-                response = f"There are {count} {role}{'s' if count != 1 else ''}."
-            elif attribute == 'names':
-                users = db["new_data.users"].find({"role": {"$regex": f"^{role}$", "$options": "i"}})
-                names = []
-                for u in users:
-                    name = u.get("full_name") or u.get("username") or "Unknown"
-                    names.append(name)
-                response = f"{role.title()}s: {', '.join(names)}"
-            else:
-                count = db["new_data.users"].count_documents({"role": {"$regex": f"^{role}$", "$options": "i"}})
-                response = f"There are {count} {role}{'s' if count != 1 else ''}."
-            # Save to DB
-    if mongodb_available and db is not None:
-        try:
-            current_time = datetime.now(UTC)
-            conversation_doc = {
-                "user_id": str(user_id),  # Always store as string!
-                "question": message,
-                "response": response,
-                "timestamp": current_time
-                 }
-            db.chatbot_conversations.insert_one(conversation_doc)
-        except Exception as e:
-            print(f"Error saving chatbot conversation: {str(e)}")
-            print("[DEBUG] return: user/role branch")
-            sys.stdout.flush()
-            return {"response": response}
+    if not handled:
+        user_keywords = ['supervisor', 'technician', 'manager']
+        user_actions = ['how many', 'number', 'count', 'list', 'show', 'names', 'who']
+        if (any(role in message for role in user_keywords) and
+            any(action in message for action in user_actions) and
+            analysis.get('intent') != 'guidance'):
+            role = next((r for r in user_keywords if r in message), None)
+            if role:
+                if any(word in message for word in ['how many', 'number', 'count', 'total']):
+                    attribute = 'count'
+                elif any(word in message for word in ['name', 'list', 'show']):
+                    attribute = 'names'
+                else:
+                    attribute = 'count'
+                if attribute == 'count':
+                    count = db["new_data.users"].count_documents({"role": {"$regex": f"^{role}$", "$options": "i"}})
+                    response = f"There are {count} {role}{'s' if count != 1 else ''}."
+                elif attribute == 'names':
+                    users = db["new_data.users"].find({"role": {"$regex": f"^{role}$", "$options": "i"}})
+                    names = []
+                    for u in users:
+                        name = u.get("full_name") or u.get("username") or "Unknown"
+                        names.append(name)
+                    response = f"{role.title()}s: {', '.join(names)}"
+                else:
+                    count = db["new_data.users"].count_documents({"role": {"$regex": f"^{role}$", "$options": "i"}})
+                    response = f"There are {count} {role}{'s' if count != 1 else ''}."
+                handled = True
 
     # User email query support
-    if any(word in message for word in ['email', 'mail', 'address']):
+    if not handled and any(word in message for word in ['email', 'mail', 'address']):
         import re
         name_query = None
         # Try to extract name after 'of'
@@ -2665,199 +2620,103 @@ def chatbot():
                 response = f"Sorry, I couldn't find an email for {name_query.title()}."
         else:
             response = "Sorry, I couldn't extract the name from your question."
-        # Save to DB
-        if mongodb_available and db is not None:
-            try:
-                current_time = datetime.now(UTC)
-                conversation_doc = {
-                    "user_id": str(user_id),  # Always store as string!
-                    "question": message,
-                    "response": response,
-                    "timestamp": current_time
-                }
-                db.chatbot_conversations.insert_one(conversation_doc)
-                print(f"Saved email conversation for user {user_id}, id: {result.inserted_id}")
-            except Exception as e:
-                print(f"Error saving email conversation: {str(e)}")
-        print("[DEBUG] return: email branch")
-        sys.stdout.flush()
-        return {"response": response}
+        handled = True
 
     # Fallback: If message starts with 'how to', 'how do i', or confidence is low, check guidance
-    howto_starts = (
-        message.strip().startswith('how to') or
-        message.strip().startswith('how do i') or
-        message.strip().startswith('how can i') or
-        message.strip().startswith('how should i')
-    )
-    if howto_starts or confidence < 0.6:
-        response = get_guidance(message)
-        # Only return if guidance is found (not the default sorry message)
-        if response and not response.lower().startswith("i'm sorry"):
-            # Save guidance response to database
-            if mongodb_available and db is not None:
-                try:
-                    current_time = datetime.now(UTC)
-                    print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
-                    conversation_doc = {
-                        "user_id": str(user_id),  # Always store as string!
-                        "question": message,
-                        "response": response,
-                        "timestamp": current_time
-                    }
-                    result = db.chatbot_conversations.insert_one(conversation_doc)
-                    print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
-                except Exception as e:
-                    print(f"Error saving guidance conversation: {str(e)}")
-            return {"response": response}
+    if not handled:
+        howto_starts = (
+            message.strip().startswith('how to') or
+            message.strip().startswith('how do i') or
+            message.strip().startswith('how can i') or
+            message.strip().startswith('how should i')
+        )
+        if howto_starts or analysis.get('confidence', 1.0) < 0.6:
+            response = get_guidance(message)
+            if response and not response.lower().startswith("i'm sorry"):
+                handled = True
 
     # Handle guidance questions first (existing logic)
-    if intent == 'guidance' and confidence >= 0.4:
+    if not handled and analysis.get('intent') == 'guidance' and analysis.get('confidence', 1.0) >= 0.4:
         response = get_guidance(message)
-        # Save guidance response to database
-        if mongodb_available and db is not None:
-            try:
-                current_time = datetime.now(UTC)
-                print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
-                conversation_doc = {
-                    "user_id": str(user_id),  # Always store as string!
-                    "question": message,
-                    "response": response,
-                    "timestamp": current_time
-                }
-                result = db.chatbot_conversations.insert_one(conversation_doc)
-                print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
-            except Exception as e:
-                print(f"Error saving guidance conversation: {str(e)}")
-        return {"response": response}
+        handled = True
 
     # Continue with existing logic for database queries
-    
-    analysis['original_question'] = message
-    print(f"[DEBUG] analysis.filters: {analysis['filters']}, is_db_query: {is_db_query}, message: {message}")
-    sys.stdout.flush()
-
-    # Check if the query is likely NOT a database query (minimal metrics/filters)
-    is_db_query = (
-        analysis['metrics']
-        or analysis['filters']
-        or analysis.get('date_info')
-        or analysis.get('math_operation')
-        or analysis.get('calculation_type')
-        or analysis.get('comparison')
-    )
-    # Ensure that if intent is 'failures' and a technician filter is present, always query the database
-    if intent == 'failures' and 'technician' in analysis['filters']:
-        is_db_query = True
-
-    # Guidance and non-guidance phrase detection
-    guidance_starts = (
-        message.strip().startswith('how to') or
-        message.strip().startswith('how do i') or
-        message.strip().startswith('how can i') or
-        message.strip().startswith('how should i')
-    )
-    non_guidance_starts = (
-        message.strip().startswith('what') or
-        message.strip().startswith('show') or
-        message.strip().startswith('list') or
-        message.strip().startswith('give me')
-    )
-    print(f"[DEBUG] intent: {intent}, confidence: {confidence}, guidance_starts: {guidance_starts}, non_guidance_starts: {non_guidance_starts}, is_db_query: {is_db_query}")
-
-    response = ""
-    # Refined fallback: If message starts with a guidance phrase and is_db_query is False, always fetch from guidance
-    if guidance_starts and not is_db_query:
-        response = get_guidance(message)
-        # Only return if guidance is found (not the default sorry message)
-        if response and not response.lower().startswith("i'm sorry"):
-            if mongodb_available and db is not None:
-                try:
-                    current_time = datetime.now(UTC)
-                    print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
-                    conversation_doc = {
-                        "user_id": str(user_id),  # Always store as string!
-                        "question": message,
-                        "response": response,
-                        "timestamp": current_time
-                    }
-                    result = db.chatbot_conversations.insert_one(conversation_doc)
-                    print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
-                except Exception as e:
-                    print(f"Error saving guidance conversation: {str(e)}")
-            return {"response": response}
-
-    # Only trigger guidance fallback if (intent == 'guidance') OR (confidence is very low AND guidance_starts and not non_guidance_starts)
-    guidance_trigger = (
-        intent == 'guidance' or
-        (confidence < 0.4 and guidance_starts and not non_guidance_starts)
-    )
-    if not is_db_query and guidance_trigger:
-        response = get_guidance(message)
-        # Only return if guidance is found (not the default sorry message)
-        if response and not response.lower().startswith("i'm sorry"):
-            if mongodb_available and db is not None:
-                try:
-                    current_time = datetime.now(UTC)
-                    print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
-                    conversation_doc = {
-                        "user_id": str(user_id),  # Always store as string!
-                        "question": message,
-                        "response": response,
-                        "timestamp": current_time
-                    }
-                    result = db.chatbot_conversations.insert_one(conversation_doc)
-                    print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
-                except Exception as e:
-                    print(f"Error saving guidance conversation: {str(e)}")
-            return {"response": response}
-
-    # Refined fallback: Only trigger guidance if message starts with a guidance phrase, does NOT start with a non-guidance phrase, and is_db_query is False
-    if guidance_starts and not non_guidance_starts and not is_db_query:
-        print("[DEBUG] about to call get_guidance")
+    if not handled:
+        print(f"[DEBUG] analysis.filters: {analysis['filters']}, is_db_query: {is_db_query}, message: {message}")
         sys.stdout.flush()
-        response = get_guidance(message)
-        # Only return if guidance is found (not the default sorry message)
-        if response and not response.lower().startswith("i'm sorry"):
-            if mongodb_available and db is not None:
-                try:
-                    current_time = datetime.now(UTC)
-                    print(f"Saving guidance conversation for user {user_id} at {current_time.isoformat()}")
-                    conversation_doc = {
-                        "user_id": str(user_id),  # Always store as string!
-                        "question": message,
-                        "response": response,
-                        "timestamp": current_time
-                    }
-                    result = db.chatbot_conversations.insert_one(conversation_doc)
-                    print(f"Saved guidance conversation for user {user_id}, id: {result.inserted_id}")
-                except Exception as e:
-                    print(f"Error saving guidance conversation: {str(e)}")
-            return {"response": response}
+        # Check if the query is likely NOT a database query (minimal metrics/filters)
+        is_db_query = (
+            analysis['metrics']
+            or analysis['filters']
+            or analysis.get('date_info')
+            or analysis.get('math_operation')
+            or analysis.get('calculation_type')
+            or analysis.get('comparison')
+        )
+        # Ensure that if intent is 'failures' and a technician filter is present, always query the database
+        if analysis.get('intent') == 'failures' and 'technician' in analysis['filters']:
+            is_db_query = True
+        # Guidance and non-guidance phrase detection
+        guidance_starts = (
+            message.strip().startswith('how to') or
+            message.strip().startswith('how do i') or
+            message.strip().startswith('how can i') or
+            message.strip().startswith('how should i')
+        )
+        non_guidance_starts = (
+            message.strip().startswith('what') or
+            message.strip().startswith('show') or
+            message.strip().startswith('list') or
+            message.strip().startswith('give me')
+        )
+        print(f"[DEBUG] intent: {analysis.get('intent')}, confidence: {analysis.get('confidence')}, guidance_starts: {guidance_starts}, non_guidance_starts: {non_guidance_starts}, is_db_query: {is_db_query}")
+        response = ""
+        # Refined fallback: If message starts with a guidance phrase and is_db_query is False, always fetch from guidance
+        if guidance_starts and not is_db_query:
+            response = get_guidance(message)
+            if response and not response.lower().startswith("i'm sorry"):
+                handled = True
+        # Only trigger guidance fallback if (intent == 'guidance') OR (confidence is very low AND guidance_starts and not non_guidance_starts)
+        guidance_trigger = (
+            analysis.get('intent') == 'guidance' or
+            (analysis.get('confidence', 1.0) < 0.4 and guidance_starts and not non_guidance_starts)
+        )
+        if not is_db_query and guidance_trigger and not handled:
+            response = get_guidance(message)
+            if response and not response.lower().startswith("i'm sorry"):
+                handled = True
+        # Refined fallback: Only trigger guidance if message starts with a guidance phrase, does NOT start with a non-guidance phrase, and is_db_query is False
+        if guidance_starts and not non_guidance_starts and not is_db_query and not handled:
+            print("[DEBUG] about to call get_guidance")
+            sys.stdout.flush()
+            response = get_guidance(message)
+            if response and not response.lower().startswith("i'm sorry"):
+                handled = True
+        # Otherwise, always try DB if is_db_query or not response
+        if (is_db_query or not response or "Error: Guidance file not found" in response) and not handled:
+            print("[DEBUG] about to call query_database")
+            sys.stdout.flush()
+            response = query_database(analysis)
+            if isinstance(response, str):
+                response = response.replace('<br><br>', ' ').replace('<br>', ' ')
+            handled = True
 
-    # Otherwise, always try DB if is_db_query or not response
-    if is_db_query or not response or "Error: Guidance file not found" in response:
-        print("[DEBUG] about to call query_database")
-        sys.stdout.flush()
-        response = query_database(analysis)
-        # Remove <br> and <br><br> from the response if present
-        if isinstance(response, str):
-            response = response.replace('<br><br>', ' ').replace('<br>', ' ')
-        # Save the conversation to MongoDB
-        if mongodb_available and db is not None:
-            try:
-                current_time = datetime.now(UTC)
-                print(f"Saving conversation for user {user_id} at {current_time.isoformat()}")
-                conversation_doc = {
-                    "user_id": str(user_id),  # Always store as string!
-                    "question": message,
-                    "response": response,
-                    "timestamp": current_time
-                }
-                result = db.chatbot_conversations.insert_one(conversation_doc)
-                print(f"Saved chatbot conversation for user {user_id}, id: {result.inserted_id}")
-            except Exception as e:
-                print(f"Error saving chatbot conversation: {str(e)}")
+    # Save the conversation to MongoDB AFTER response is generated
+    if mongodb_available and db is not None and response:
+        try:
+            current_time = datetime.now(UTC)
+            print(f"Saving conversation for user {user_id} at {current_time.isoformat()}")
+            conversation_doc = {
+                "user_id": str(user_id),  # Always store as string!
+                "question": message,
+                "response": response,
+                "timestamp": current_time
+            }
+            result = db.chatbot_conversations.insert_one(conversation_doc)
+            print(f"Saved chatbot conversation for user {user_id}, id: {result.inserted_id}")
+        except Exception as e:
+            print(f"Error saving chatbot conversation: {str(e)}")
+
     return {"response": response}
 
 @app.route("/chatbot/diagnostics", methods=["GET"])
@@ -2960,7 +2819,7 @@ def get_conversation_history(user_id):
         
         # Use a simpler query without date filtering to ensure all records are returned
         conversations = list(db.chatbot_conversations.find(
-            {"user_id": user_id},
+            {"user_id": str(user_id)},
             {"_id": 0}  # Exclude MongoDB _id field from results
         ).sort("timestamp", -1))  # Removed limit to get all conversations
         
